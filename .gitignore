@@ -1,0 +1,11 @@
+# ไฟล์ของ Node.js (Frontend)
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# ไฟล์ของ Go (Backend)
+backend/main
+
+# ไฟล์แวดล้อมและอื่นๆ
+.env
+.DS_Store

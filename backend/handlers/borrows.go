@@ -1,0 +1,110 @@
+package handlers
+
+import (
+	"smart-library-api/database"
+	"smart-library-api/models"
+	"time"
+
+	"github.com/gofiber/fiber/v2"
+)
+
+// ค้นหาผู้ยืมจาก code
+func FindBorrowerByCode(c *fiber.Ctx) error {
+	code := c.Params("code")
+	var borrower models.Borrower
+	if err := database.DB.Where("code = ?", code).First(&borrower).Error; err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "ไม่พบข้อมูลในระบบ กรุณาติดต่อบรรณารักษ์"})
+	}
+	return c.JSON(borrower)
+}
+
+// ค้นหาหนังสือจาก ISBN
+func FindBookByISBN(c *fiber.Ctx) error {
+	isbn := c.Params("isbn")
+	var book models.Book
+	if err := database.DB.Where("isbn = ?", isbn).First(&book).Error; err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "ไม่พบหนังสือในระบบ"})
+	}
+	return c.JSON(book)
+}
+
+// ดึงรายการยืมที่ยังไม่คืนของผู้ยืม
+func GetActiveBorrows(c *fiber.Ctx) error {
+	borrowerID := c.Params("borrower_id")
+	var records []models.BorrowRecord
+	database.DB.Preload("Book").Preload("Borrower").
+		Where("borrower_id = ? AND status = ?", borrowerID, "borrowed").
+		Find(&records)
+	return c.JSON(records)
+}
+
+// บันทึกการคืนหนังสือ (ใช้ borrower_id + book_id)
+func ReturnByBorrowerAndBook(c *fiber.Ctx) error {
+	type ReturnRequest struct {
+		BorrowerID uint `json:"borrower_id"`
+		BookID     uint `json:"book_id"`
+	}
+	req := new(ReturnRequest)
+	if err := c.BodyParser(req); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "ข้อมูลไม่ถูกต้อง"})
+	}
+
+	// หา borrow record ที่ยังไม่คืน
+	var record models.BorrowRecord
+	err := database.DB.
+		Where("borrower_id = ? AND book_id = ? AND status = ?", req.BorrowerID, req.BookID, "borrowed").
+		First(&record).Error
+	if err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "ไม่พบรายการยืมหนังสือเล่มนี้"})
+	}
+
+	// อัปเดตสถานะเป็น returned
+	now := time.Now()
+	record.ReturnedAt = &now
+	record.Status = "returned"
+	database.DB.Save(&record)
+
+	return c.JSON(fiber.Map{"message": "บันทึกการคืนสำเร็จ", "record_id": record.ID})
+}
+
+// API เดิม
+func GetBorrowRecords(c *fiber.Ctx) error {
+	var records []models.BorrowRecord
+	database.DB.Preload("Book").Preload("Borrower").Find(&records)
+	return c.JSON(records)
+}
+
+func CreateBorrowRecord(c *fiber.Ctx) error {
+	record := new(models.BorrowRecord)
+	if err := c.BodyParser(record); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "ข้อมูลไม่ถูกต้อง"})
+	}
+	record.BorrowedAt = time.Now()
+	record.DueDate = time.Now().AddDate(0, 0, 14)
+	record.Status = "borrowed"
+	result := database.DB.Create(record)
+	if result.Error != nil {
+		return c.Status(500).JSON(fiber.Map{"error": result.Error.Error()})
+	}
+	database.DB.Preload("Book").Preload("Borrower").First(record, record.ID)
+	return c.Status(201).JSON(record)
+}
+
+func ReturnBook(c *fiber.Ctx) error {
+	id := c.Params("id")
+	var record models.BorrowRecord
+	if err := database.DB.First(&record, id).Error; err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "ไม่พบรายการ"})
+	}
+	now := time.Now()
+	record.ReturnedAt = &now
+	record.Status = "returned"
+	database.DB.Save(&record)
+	return c.JSON(fiber.Map{"message": "บันทึกการคืนสำเร็จ"})
+}
+
+func DeleteBorrowRecord(c *fiber.Ctx) error {
+	id := c.Params("id")
+	database.DB.Delete(&models.BorrowRecord{}, id)
+	return c.JSON(fiber.Map{"message": "ลบรายการสำเร็จ"})
+}
