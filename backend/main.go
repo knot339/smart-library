@@ -4,6 +4,7 @@ import (
 	"smart-library-api/database"
 	"smart-library-api/handlers"
 	"smart-library-api/hardware"
+	"smart-library-api/models"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
@@ -41,6 +42,73 @@ func main() {
 	app.Post("/api/simulate/reset", func(c *fiber.Ctx) error {
 		hw.Capacity = 0
 		return c.JSON(fiber.Map{"message": "รีเซ็ตตู้แล้ว", "capacity": 0})
+	})
+
+	// Dashboard API
+	app.Get("/api/dashboard/cabinet", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{
+			"capacity":     hw.Capacity,
+			"motor_status": hw.MotorStatus,
+			"status":       "online",
+		})
+	})
+
+	app.Post("/api/dashboard/motor/open", func(c *fiber.Ctx) error {
+		hw.OpenMotor()
+		return c.JSON(fiber.Map{
+			"message":      "เปิดตู้สำเร็จ",
+			"motor_status": hw.MotorStatus,
+		})
+	})
+
+	app.Post("/api/dashboard/motor/close", func(c *fiber.Ctx) error {
+		hw.CloseMotor()
+		return c.JSON(fiber.Map{
+			"message":      "ปิดตู้สำเร็จ",
+			"motor_status": hw.MotorStatus,
+		})
+	})
+
+	app.Get("/api/dashboard/books-in-cabinet", func(c *fiber.Ctx) error {
+		var records []models.BorrowRecord
+		database.DB.Preload("Book").Preload("Borrower").
+			Where("status = ? AND returned_at IS NOT NULL", "returned").
+			Order("returned_at DESC").
+			Find(&records)
+
+		bookMap := make(map[uint]fiber.Map)
+		for _, r := range records {
+			if _, exists := bookMap[r.BookID]; !exists {
+				bookMap[r.BookID] = fiber.Map{
+					"id":          r.Book.ID,
+					"title":       r.Book.Title,
+					"author":      r.Book.Author,
+					"isbn":        r.Book.ISBN,
+					"returned_at": r.ReturnedAt,
+					"returned_by": r.Borrower.Name,
+				}
+			}
+		}
+
+		books := make([]fiber.Map, 0, len(bookMap))
+		for _, b := range bookMap {
+			books = append(books, b)
+		}
+
+		return c.JSON(fiber.Map{
+			"count": len(books),
+			"books": books,
+		})
+	})
+
+	app.Get("/api/dashboard/recent-returns", func(c *fiber.Ctx) error {
+		var records []models.BorrowRecord
+		database.DB.Preload("Book").Preload("Borrower").
+			Where("status = ?", "returned").
+			Order("returned_at DESC").
+			Limit(20).
+			Find(&records)
+		return c.JSON(records)
 	})
 
 	// Lookup APIs
