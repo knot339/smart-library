@@ -53,18 +53,29 @@ func main() {
 		})
 	})
 
+	// เปิดรับหนังสือ (แกนชักหดบางส่วน)
 	app.Post("/api/dashboard/motor/open", func(c *fiber.Ctx) error {
-		hw.OpenMotor()
+		hw.SetOpen()
 		return c.JSON(fiber.Map{
-			"message":      "เปิดตู้สำเร็จ",
+			"message":      "เปิดรับหนังสือแล้ว",
 			"motor_status": hw.MotorStatus,
 		})
 	})
 
+	// ปิด (แกนชักยืดสุด)
 	app.Post("/api/dashboard/motor/close", func(c *fiber.Ctx) error {
-		hw.CloseMotor()
+		hw.SetClosed()
 		return c.JSON(fiber.Map{
-			"message":      "ปิดตู้สำเร็จ",
+			"message":      "ปิดตู้แล้ว",
+			"motor_status": hw.MotorStatus,
+		})
+	})
+
+	// เท (แกนชักหดสุด)
+	app.Post("/api/dashboard/motor/dump", func(c *fiber.Ctx) error {
+		hw.SetDump()
+		return c.JSON(fiber.Map{
+			"message":      "เทหนังสือลงเก็บแล้ว",
 			"motor_status": hw.MotorStatus,
 		})
 	})
@@ -94,11 +105,7 @@ func main() {
 		for _, b := range bookMap {
 			books = append(books, b)
 		}
-
-		return c.JSON(fiber.Map{
-			"count": len(books),
-			"books": books,
-		})
+		return c.JSON(fiber.Map{"count": len(books), "books": books})
 	})
 
 	app.Get("/api/dashboard/recent-returns", func(c *fiber.Ctx) error {
@@ -109,6 +116,23 @@ func main() {
 			Limit(20).
 			Find(&records)
 		return c.JSON(records)
+	})
+
+	// รีเซ็ตรายการหนังสือในตู้ (หลังเก็บหนังสือออกแล้ว)
+	app.Post("/api/dashboard/cabinet/reset", func(c *fiber.Ctx) error {
+		// รีเซ็ตความจุตู้กลับเป็น 0
+		hw.Capacity = 0
+		hw.SetClosed()
+
+		// ลบประวัติ returned ทั้งหมดออกจาก DB
+		// (หรือจะ mark ว่า "collected" แทนการลบก็ได้)
+		database.DB.Where("status = ?", "returned").
+			Delete(&models.BorrowRecord{})
+
+		return c.JSON(fiber.Map{
+			"message":      "รีเซ็ตรายการในตู้สำเร็จ",
+			"motor_status": hw.MotorStatus,
+		})
 	})
 
 	// Lookup APIs
