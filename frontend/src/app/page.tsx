@@ -40,7 +40,7 @@ export default function TabletPage() {
         const res = await fetch(`${API}/status`);
         const data = await res.json();
         setCapacity(data.capacity);
-      } catch {}
+      } catch { }
     };
     fetch_();
     const t = setInterval(fetch_, 3000);
@@ -81,7 +81,7 @@ export default function TabletPage() {
     ws.onerror = () => console.log("WebSocket error");
 
     return () => ws.close();
-  }, []);  
+  }, []);
 
   const handleSelectUser = (type: UserType) => {
     setUserType(type);
@@ -91,7 +91,7 @@ export default function TabletPage() {
   };
 
   // ขั้นตอน 1: ตรวจสอบตัวตนจาก DB
-  const handleIdentify= async () => {
+  const handleIdentify = async () => {
     if (!inputCode.trim()) {
       setErrorMsg(userType === "student" ? "กรุณากรอกรหัสนักศึกษา" : "กรุณากรอกเบอร์โทรศัพท์");
       return;
@@ -412,7 +412,9 @@ export default function TabletPage() {
           {step === "success" && (
             <div className="text-center">
               <div className="text-7xl mb-4">🎉</div>
-              <h2 className="text-2xl font-bold text-green-700 mb-2">คืนหนังสือสำเร็จ!</h2>
+              <h2 className="text-2xl font-bold text-green-700 mb-2">
+                คืนหนังสือสำเร็จ!
+              </h2>
               <p className="text-gray-500 mb-4">บันทึกลงฐานข้อมูลเรียบร้อยแล้ว</p>
               <div className="bg-green-50 border border-green-200 rounded-xl p-4 mb-6 text-left">
                 <p className="text-green-600 text-xs font-semibold mb-2">✅ รายละเอียดการคืน</p>
@@ -420,10 +422,29 @@ export default function TabletPage() {
                 <p className="text-gray-700"><span className="text-gray-400 text-sm">หนังสือ: </span>{book?.title}</p>
                 <p className="text-gray-700"><span className="text-gray-400 text-sm">เวลา: </span>{new Date().toLocaleString("th-TH")}</p>
               </div>
-              <button onClick={handleReset}
-                className="w-full bg-blue-700 hover:bg-blue-800 text-white font-bold py-4 rounded-xl text-lg transition active:scale-95">
-                🔄 คืนหนังสือเล่มถัดไป
-              </button>
+
+              <div className="flex flex-col gap-3">
+                {/* ← ปุ่มใหม่: คืนเล่มถัดไปโดยคนเดิม */}
+                <button
+                  onClick={() => {
+                    setBook(null);
+                    setInputISBN("");
+                    setErrorMsg("");
+                    setStep("check-book"); // ← ข้ามไปขั้นตอนกรอก ISBN เลย
+                  }}
+                  className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-4 rounded-xl text-lg transition active:scale-95"
+                >
+                  📚 คืนเล่มถัดไป
+                </button>
+
+                {/* ปุ่มเดิม: เริ่มใหม่ทั้งหมด */}
+                <button
+                  onClick={handleReset}
+                  className="w-full bg-blue-700 hover:bg-blue-800 text-white font-bold py-4 rounded-xl text-lg transition active:scale-95"
+                >
+                  ✅ เสร็จสิ้น
+                </button>
+              </div>
             </div>
           )}
 

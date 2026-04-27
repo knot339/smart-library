@@ -196,21 +196,6 @@ export default function DashboardPage() {
                             {capacity >= 100 ? "⚠️ ตู้เต็ม ต้องนำหนังสือออก" : `ว่างอยู่ ${100 - capacity}%`}
                         </p>
                     </div>
-                    {/* ปุ่มรีเซ็ตรายการในตู้ */}
-                    <div className="mt-4 border-t pt-4">
-                        <div className="flex items-center justify-between">
-                            <div>
-                                <p className="text-sm font-semibold text-gray-700">🗂️ รีเซ็ตรายการในตู้</p>
-                                <p className="text-xs text-gray-400">ใช้หลังจากเก็บหนังสือออกจากตู้แล้ว จะล้างรายการและความจุกลับเป็น 0</p>
-                            </div>
-                            <button
-                                onClick={() => setConfirmReset(true)}
-                                className="bg-red-500 hover:bg-red-600 text-white font-bold px-5 py-2 rounded-xl transition active:scale-95 whitespace-nowrap ml-4"
-                            >
-                                🗑️ รีเซ็ตรายการ
-                            </button>
-                        </div>
-                    </div>
                 </div>
 
                 {/* ควบคุมตู้ */}
@@ -268,6 +253,22 @@ export default function DashboardPage() {
                     <p className="text-gray-400 text-xs mt-3 text-center">
                         ⚠️ ตรวจสอบให้แน่ใจก่อนสั่งงานมอเตอร์ทุกครั้ง
                     </p>
+
+                    {/* ปุ่มรีเซ็ตรายการในตู้ */}
+                    <div className="mt-4 border-t pt-4">
+                        <div className="flex items-center justify-between">
+                            <div>
+                                <p className="text-sm font-semibold text-gray-700">🗂️ รีเซ็ตรายการในตู้</p>
+                                <p className="text-xs text-gray-400">ใช้หลังจากเก็บหนังสือออกจากตู้แล้ว จะล้างรายการและความจุกลับเป็น 0</p>
+                            </div>
+                            <button
+                                onClick={() => setConfirmReset(true)}
+                                className="bg-red-500 hover:bg-red-600 text-white font-bold px-5 py-2 rounded-xl transition active:scale-95 whitespace-nowrap ml-4"
+                            >
+                                🗑️ รีเซ็ตรายการ
+                            </button>
+                        </div>
+                    </div>
                 </div>
 
                 {/* Tab */}
