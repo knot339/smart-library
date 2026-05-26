@@ -31,12 +31,15 @@ func main() {
 
 	// Hardware simulation
 	app.Get("/api/status", func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{"capacity": hw.Capacity, "status": "Ready"})
+		return c.JSON(fiber.Map{
+			"capacity":     hw.Capacity,
+			"motor_status": hw.MotorStatus,
+			"motor_logs":   hw.MotorLogs,
+			"status":       "Ready",
+		})
 	})
 	app.Post("/api/simulate/return-book", func(c *fiber.Ctx) error {
-		hw.OpenMotor()
 		newCapacity := hw.AddBook()
-		hw.CloseMotor()
 		return c.JSON(fiber.Map{"message": "รับคืนหนังสือสำเร็จ", "capacity": newCapacity})
 	})
 	app.Post("/api/simulate/reset", func(c *fiber.Ctx) error {

@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 
 const API = "http://localhost:8080/api";
 
@@ -23,6 +23,7 @@ export default function TabletPage() {
   const [errorMsg, setErrorMsg] = useState("");
   const [time, setTime] = useState("");
   const [motorOpen, setMotorOpen] = useState(false);
+  const motorOpenedRef = useRef(false);
 
   // เวลาปัจจุบัน
   useEffect(() => {
@@ -83,6 +84,16 @@ export default function TabletPage() {
     return () => ws.close();
   }, []);
 
+  // เปิดตู้เมื่อเข้าหน้าตรวจสอบหนังสือ (step 3) เพียงครั้งเดียว
+  useEffect(() => {
+    if (step === "check-book" && !motorOpenedRef.current) {
+      motorOpenedRef.current = true;
+      fetch(`${API}/dashboard/motor/open`, { method: "POST" }).catch(() => {});
+    } else if (step !== "check-book") {
+      motorOpenedRef.current = false;
+    }
+  }, [step]);
+
   const handleSelectUser = (type: UserType) => {
     setUserType(type);
     setInputCode("");
@@ -113,8 +124,6 @@ export default function TabletPage() {
       const borrowData = await borrowRes.json();
       setActiveBorrows(borrowData);
 
-      // เปิดตู้ (จำลอง)
-      setMotorOpen(true);
       setStep("check-book");
     } catch {
       setErrorMsg("เกิดข้อผิดพลาด กรุณาลองใหม่");
@@ -125,7 +134,7 @@ export default function TabletPage() {
   // ขั้นตอน 2: ตรวจสอบหนังสือจาก ISBN
   const handleCheckBook = async () => {
     if (!inputISBN.trim()) {
-      setErrorMsg("กรุณากรอก ISBN หรือรหัสหนังสือ");
+      setErrorMsg("กรณาวางหนังสือบนช่องรับ");
       return;
     }
     setLoading(true);
@@ -168,7 +177,14 @@ export default function TabletPage() {
       // แจ้ง Hardware ให้นับความจุ
       await fetch(`${API}/simulate/return-book`, { method: "POST" });
 
-      // ปิดตู้
+      // ทำการหย่อนหนังสือ: เท (dump) เป็นเวลา 5 วินาที
+      await fetch(`${API}/dashboard/motor/dump`, { method: "POST" });
+
+      // รอ 5 วินาที ให้หนังสือหล่นเข้าตู้
+      await new Promise(resolve => setTimeout(resolve, 5000));
+
+      // ปิดตู้ (แกนชักยืดสุด) เพื่อรอการเลือกของผู้ใช้
+      await fetch(`${API}/dashboard/motor/close`, { method: "POST" });
       setMotorOpen(false);
       setStep("success");
     } catch {
@@ -178,6 +194,11 @@ export default function TabletPage() {
   };
 
   const handleReset = () => {
+    // ปิดตู้ถ้ายังเปิดอยู่
+    if (motorOpen) {
+      fetch(`${API}/dashboard/motor/close`, { method: "POST" }).catch(() => {});
+    }
+    motorOpenedRef.current = false;
     setStep("select-user");
     setInputCode("");
     setInputISBN("");
@@ -200,7 +221,6 @@ export default function TabletPage() {
       setBorrower(data);
       const borrowRes = await fetch(`${API}/borrows/active/${data.id}`);
       setActiveBorrows(await borrowRes.json());
-      setMotorOpen(true);
       setStep("check-book");
     } catch { setErrorMsg("เกิดข้อผิดพลาด"); }
     setLoading(false);
@@ -235,7 +255,9 @@ export default function TabletPage() {
       {/* Header */}
       <div className="bg-blue-950 px-8 py-4 flex justify-between items-center border-b border-blue-800 shadow-lg">
         <div className="flex items-center gap-4">
-          <div className="bg-blue-700 rounded-full w-12 h-12 flex items-center justify-center text-2xl">📚</div>
+          <div className="bg-white rounded-full w-12 h-12 flex items-center justify-center p-1">
+            <img src="/images/LOGO-RUTS-07-2-copy.png" alt="RUTS Logo" className="w-full h-full object-contain" />
+          </div>
           <div>
             <p className="text-blue-300 text-xs tracking-widest uppercase">Book Return Station</p>
             <h1 className="text-white text-lg font-bold">ระบบรับคืนหนังสืออัตโนมัติ</h1>
@@ -314,7 +336,7 @@ export default function TabletPage() {
               <p className="text-gray-400 text-sm mb-6">ระบบจะตรวจสอบข้อมูลของคุณในฐานข้อมูล</p>
               <input
                 type="text"
-                placeholder={userType === "student" ? "เช่น 6401234567" : "เช่น 0812345678"}
+                placeholder={userType === "student" ? "เช่น 166403230001" : "เช่น 0812345678"}
                 value={inputCode}
                 onChange={(e) => setInputCode(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleIdentify()}
@@ -385,24 +407,24 @@ export default function TabletPage() {
           {step === "drop" && (
             <div className="text-center">
               <div className="text-6xl mb-4 animate-bounce">📥</div>
-              <h2 className="text-2xl font-bold text-blue-900 mb-4">หย่อนหนังสือเข้าตู้</h2>
+              <h2 className="text-2xl font-bold text-blue-900 mb-4">ดำเนินการคืนหนังสือเข้าตู้</h2>
 
               {/* ข้อมูลหนังสือที่ตรวจสอบแล้ว */}
               <div className="bg-green-50 rounded-xl p-4 mb-4 border border-green-200 text-left">
-                <p className="text-green-600 text-xs font-semibold mb-1">✅ ตรวจสอบหนังสือแล้ว</p>
+                <p className="text-green-600 text-xs font-semibold mb-1">✅ คืนหนังสือ</p>
                 <p className="text-gray-800 font-bold">{book?.title}</p>
                 <p className="text-gray-500 text-sm">{book?.author}</p>
                 <p className="text-gray-400 text-xs mt-1">ISBN: {book?.isbn}</p>
               </div>
 
               <div className="bg-yellow-50 rounded-xl p-3 mb-5 border border-yellow-200">
-                <p className="text-yellow-700 text-sm font-medium">🔓 ตู้เปิดอยู่ — กรุณาหย่อนหนังสือแล้วกดยืนยัน</p>
+                <p className="text-yellow-700 text-sm font-medium">🔓 ตู้เปิดอยู่ — กรุณากดยืนยันเพื่อคืนหนังสือ</p>
               </div>
 
               {errorMsg && <p className="text-red-500 text-sm mb-3">{errorMsg}</p>}
               <button onClick={handleDropBook} disabled={loading}
                 className="w-full bg-green-600 hover:bg-green-700 disabled:bg-gray-300 text-white font-bold py-5 rounded-xl text-xl transition shadow-lg active:scale-95">
-                {loading ? "⏳ กำลังบันทึก..." : "✅ หย่อนหนังสือแล้ว"}
+                {loading ? "⏳ กำลังบันทึก..." : "✅ ดำเนินการคืนหนังสือ"}
               </button>
               <button onClick={handleReset} className="w-full mt-4 text-gray-400 hover:text-gray-600 text-sm py-2">← ยกเลิก</button>
             </div>
@@ -421,6 +443,11 @@ export default function TabletPage() {
                 <p className="text-gray-700"><span className="text-gray-400 text-sm">ผู้คืน: </span>{borrower?.name}</p>
                 <p className="text-gray-700"><span className="text-gray-400 text-sm">หนังสือ: </span>{book?.title}</p>
                 <p className="text-gray-700"><span className="text-gray-400 text-sm">เวลา: </span>{new Date().toLocaleString("th-TH")}</p>
+              </div>
+
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 mb-6 text-center">
+                <p className="text-blue-700 text-xs font-semibold">🔒 สถานะตู้: ปิดอยู่</p>
+                <p className="text-blue-500 text-xs">รอการเลือกของผู้ใช้</p>
               </div>
 
               <div className="flex flex-col gap-3">

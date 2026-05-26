@@ -6,6 +6,7 @@ const API = "http://localhost:8080";
 export default function SimulatorPage() {
   const [capacity, setCapacity] = useState(0);
   const [log, setLog] = useState<string[]>([]);
+  const [motorLogs, setMotorLogs] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [barcodeInput, setBarcodeInput] = useState("");
   const [rfidInput, setRfidInput] = useState("");
@@ -17,7 +18,10 @@ export default function SimulatorPage() {
         const res = await fetch(`${API}/api/status`);
         const data = await res.json();
         setCapacity(data.capacity);
-      } catch {}
+        setMotorLogs(data.motor_logs || []); // ← ดึง log มอเตอร์จาก Backend
+      } catch (err) {
+        console.error("Fetch status error:", err);
+      }
     };
     fetchStatus();
     const t = setInterval(fetchStatus, 2000);
@@ -29,7 +33,6 @@ export default function SimulatorPage() {
     setLog((prev) => [`[${time}] ${msg}`, ...prev].slice(0, 15));
   };
 
-  // ส่งสัญญาณจำลองไปที่ Tablet ผ่าน Backend
   const sendToTablet = async (type: "barcode" | "rfid", value: string) => {
     if (!value.trim()) {
       addLog(`⚠️ กรุณากรอกค่า ${type === "barcode" ? "Barcode" : "RFID"} ก่อน`);
@@ -45,7 +48,8 @@ export default function SimulatorPage() {
       const data = await res.json();
       setConnectedClients(data.clients || 0);
       addLog(`📡 ส่ง ${type.toUpperCase()} → "${value}" ไปยัง ${data.clients} tablet`);
-    } catch {
+    } catch (err) {
+      console.error("Send error:", err);
       addLog("❌ ส่งสัญญาณไม่ได้ ตรวจสอบ Backend");
     }
     setLoading(false);
@@ -62,6 +66,9 @@ export default function SimulatorPage() {
     if (capacity >= 70) return "bg-yellow-400";
     return "bg-green-500";
   };
+
+  // รวม log ทั้งสองแหล่งเรียงตามเวลา โดย Frontend log อยู่บน Motor log อยู่ล่าง
+  const allLogs = [...log, ...[...motorLogs].reverse()];
 
   return (
     <div className="min-h-screen bg-gray-900 text-white p-6">
@@ -141,9 +148,18 @@ export default function SimulatorPage() {
         {/* Mock Terminal */}
         <div className="bg-black rounded-lg p-4 font-mono text-sm">
           <p className="text-green-400 mb-2">▶ Mock Terminal Log</p>
-          {log.length === 0 && <p className="text-gray-500">รอคำสั่ง...</p>}
-          {log.map((entry, i) => (
-            <p key={i} className={`${entry.includes("❌") ? "text-red-400" : entry.includes("⚠️") ? "text-yellow-400" : "text-green-300"}`}>
+          {allLogs.length === 0 && <p className="text-gray-500">รอคำสั่ง...</p>}
+          {allLogs.map((entry, i) => (
+            <p key={i} className={`
+              ${entry.includes("❌") ? "text-red-400" :
+                entry.includes("⚠️") ? "text-yellow-400" :
+                entry.includes("📡") ? "text-blue-300" :
+                entry.includes("🔒") ? "text-blue-300" :
+                entry.includes("🔓") ? "text-green-300" :
+                entry.includes("📤") ? "text-orange-300" :
+                entry.includes("📦") ? "text-yellow-300" :
+                "text-green-300"}
+            `}>
               {entry}
             </p>
           ))}

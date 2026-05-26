@@ -2,39 +2,42 @@ package hardware
 
 import "fmt"
 
-// 3 สถานะของมอเตอร์
-// "closed" = แกนชักยืดสุด (ปิดรับหนังสือ)
-// "open"   = แกนชักหดบางส่วน (เปิดรับหนังสือ)
-// "dump"   = แกนชักหดสุด (เทหนังสือลงเก็บ)
-
 type MockHardware struct {
 	Capacity    int
 	MotorStatus string
+	MotorLogs   []string
 }
 
 func NewMockHardware() *MockHardware {
-	return &MockHardware{Capacity: 0, MotorStatus: "closed"}
+	return &MockHardware{Capacity: 0, MotorStatus: "closed", MotorLogs: []string{}}
+}
+
+func (m *MockHardware) addLog(msg string) {
+	m.MotorLogs = append([]string{msg}, m.MotorLogs...)
+	if len(m.MotorLogs) > 20 {
+		m.MotorLogs = m.MotorLogs[:20]
+	}
+	fmt.Println("[Mock]", msg)
 }
 
 func (m *MockHardware) SetClosed() string {
 	m.MotorStatus = "closed"
-	fmt.Println("[Mock] 🔒 แกนชัก >> ยืดสุด (ปิด)")
+	m.addLog("🔒 แกนชัก >> ยืดสุด (ปิด)")
 	return "closed"
 }
 
 func (m *MockHardware) SetOpen() string {
 	m.MotorStatus = "open"
-	fmt.Println("[Mock] 🔓 แกนชัก >> หดบางส่วน (เปิดรับหนังสือ)")
+	m.addLog("🔓 แกนชัก >> หดบางส่วน (เปิดรับหนังสือ)")
 	return "open"
 }
 
 func (m *MockHardware) SetDump() string {
 	m.MotorStatus = "dump"
-	fmt.Println("[Mock] 📤 แกนชัก >> หดสุด (เทหนังสือลงเก็บ)")
+	m.addLog("📤 แกนชัก >> หดสุด (เทหนังสือลงเก็บ)")
 	return "dump"
 }
 
-// ใช้ตอนจำลองการหย่อนหนังสือ: เปิด → รอ → เท → ปิด
 func (m *MockHardware) OpenMotor() string {
 	return m.SetOpen()
 }
@@ -47,5 +50,6 @@ func (m *MockHardware) AddBook() int {
 	if m.Capacity < 100 {
 		m.Capacity += 10
 	}
+	m.addLog(fmt.Sprintf("📦 รับหนังสือเข้าตู้ — ความจุ %d%%", m.Capacity))
 	return m.Capacity
 }
