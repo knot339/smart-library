@@ -5,6 +5,7 @@ const API = "http://localhost:8080";
 
 export default function SimulatorPage() {
   const [capacity, setCapacity] = useState(0);
+  const [isFull, setIsFull] = useState(false);
   const [log, setLog] = useState<string[]>([]);
   const [motorLogs, setMotorLogs] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
@@ -18,6 +19,7 @@ export default function SimulatorPage() {
         const res = await fetch(`${API}/api/status`);
         const data = await res.json();
         setCapacity(data.capacity);
+        setIsFull(data.is_full);
         setMotorLogs(data.motor_logs || []); // ← ดึง log มอเตอร์จาก Backend
       } catch (err) {
         console.error("Fetch status error:", err);
@@ -58,7 +60,23 @@ export default function SimulatorPage() {
   const handleReset = async () => {
     await fetch(`${API}/api/simulate/reset`, { method: "POST" });
     setCapacity(0);
+    setIsFull(false);
     addLog("🔄 รีเซ็ตตู้แล้ว");
+  };
+
+  const setFullState = async (full: boolean) => {
+    try {
+      const res = await fetch(`${API}/api/dashboard/cabinet/set-full`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ is_full: full }),
+      });
+      const data = await res.json();
+      setIsFull(full);
+      addLog(full ? "🔴 ตู้เต็ม" : "🟢 ตู้ว่าง");
+    } catch {
+      addLog("❌ ตั้งค่าตู้ไม่สำเร็จ");
+    }
   };
 
   const getBarColor = () => {
@@ -84,18 +102,31 @@ export default function SimulatorPage() {
           </div>
         </div>
 
-        {/* ความจุตู้ */}
+        {/* สถานะตู้ */}
         <div className="bg-gray-800 rounded-lg p-4 mb-4">
-          <div className="flex justify-between mb-2">
-            <p className="font-semibold">ความจุตู้รับคืน</p>
-            <p className="font-bold text-lg">{capacity}%</p>
+          <div className="flex justify-between items-center mb-4">
+            <p className="font-semibold">สถานะตู้รับคืน</p>
+            <div className={`text-2xl ${isFull ? "🔴" : "🟢"}`}></div>
           </div>
-          <div className="w-full bg-gray-700 rounded-full h-4">
-            <div className={`h-4 rounded-full transition-all duration-500 ${getBarColor()}`}
-              style={{ width: `${capacity}%` }} />
+          <p className={`text-center text-lg font-bold mb-4 ${isFull ? "text-red-400" : "text-green-400"}`}>
+            {isFull ? "เต็ม" : "ไม่เต็ม"}
+          </p>
+          <div className="flex gap-2 mb-3">
+            <button
+              onClick={() => setFullState(false)}
+              className={`flex-1 py-2 rounded-lg text-sm font-semibold transition ${!isFull ? "bg-green-600" : "bg-gray-600 hover:bg-gray-500"}`}
+            >
+              🟢 ตู้ว่าง
+            </button>
+            <button
+              onClick={() => setFullState(true)}
+              className={`flex-1 py-2 rounded-lg text-sm font-semibold transition ${isFull ? "bg-red-600" : "bg-gray-600 hover:bg-gray-500"}`}
+            >
+              🔴 ตู้เต็ม
+            </button>
           </div>
-          <button onClick={handleReset} className="mt-3 w-full bg-gray-600 hover:bg-gray-500 text-white py-2 rounded-lg text-sm transition">
-            🔄 รีเซ็ตความจุตู้
+          <button onClick={handleReset} className="w-full bg-gray-600 hover:bg-gray-500 text-white py-2 rounded-lg text-sm transition">
+            🔄 รีเซ็ต
           </button>
         </div>
 

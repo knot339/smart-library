@@ -37,6 +37,7 @@ const MOTOR_CONFIG: Record<MotorStatus, {
 
 export default function DashboardPage() {
     const [capacity, setCapacity] = useState(0);
+    const [isFull, setIsFull] = useState(false);
     const [motorStatus, setMotorStatus] = useState<MotorStatus>("closed");
     const [cabinetOnline, setCabinetOnline] = useState(false);
     const [booksInCabinet, setBooksInCabinet] = useState<BookInCabinet[]>([]);
@@ -66,6 +67,7 @@ export default function DashboardPage() {
             const res = await fetch(`${API}/dashboard/cabinet`);
             const data = await res.json();
             setCapacity(data.capacity);
+            setIsFull(data.is_full);
             setMotorStatus(data.motor_status as MotorStatus);
             setCabinetOnline(true);
         } catch { setCabinetOnline(false); }
@@ -182,19 +184,24 @@ export default function DashboardPage() {
                         </div>
                     </div>
 
-                    {/* ความจุ */}
+                    {/* สถานะความจุตู้ */}
                     <div className="bg-white rounded-xl shadow p-5">
-                        <div className="flex justify-between items-center mb-2">
-                            <p className="text-gray-400 text-sm">ความจุตู้</p>
-                            <p className={`text-xl font-bold ${capText}`}>{capacity}%</p>
+                        <p className="text-gray-400 text-sm mb-3">สถานะความจุ</p>
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                                <div className={`w-12 h-12 rounded-full flex items-center justify-center text-2xl ${isFull ? "bg-red-100" : "bg-green-100"}`}>
+                                    {isFull ? "🔴" : "🟢"}
+                                </div>
+                                <div>
+                                    <p className={`text-lg font-bold ${isFull ? "text-red-600" : "text-green-600"}`}>
+                                        {isFull ? "เต็ม" : "ไม่เต็ม"}
+                                    </p>
+                                    <p className="text-gray-400 text-xs">
+                                        {isFull ? "ต้องนำหนังสือออก" : "สามารถรับหนังสือได้"}
+                                    </p>
+                                </div>
+                            </div>
                         </div>
-                        <div className="w-full bg-gray-200 rounded-full h-3 mb-1">
-                            <div className={`h-3 rounded-full transition-all duration-500 ${capColor}`}
-                                style={{ width: `${Math.min(capacity, 100)}%` }} />
-                        </div>
-                        <p className="text-gray-400 text-xs">
-                            {capacity >= 100 ? "⚠️ ตู้เต็ม ต้องนำหนังสือออก" : `ว่างอยู่ ${100 - capacity}%`}
-                        </p>
                     </div>
                 </div>
 

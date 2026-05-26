@@ -33,6 +33,7 @@ func main() {
 	app.Get("/api/status", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
 			"capacity":     hw.Capacity,
+			"is_full":      hw.IsFull,
 			"motor_status": hw.MotorStatus,
 			"motor_logs":   hw.MotorLogs,
 			"status":       "Ready",
@@ -51,6 +52,7 @@ func main() {
 	app.Get("/api/dashboard/cabinet", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
 			"capacity":     hw.Capacity,
+			"is_full":      hw.IsFull,
 			"motor_status": hw.MotorStatus,
 			"status":       "online",
 		})
@@ -80,6 +82,22 @@ func main() {
 		return c.JSON(fiber.Map{
 			"message":      "เทหนังสือลงเก็บแล้ว",
 			"motor_status": hw.MotorStatus,
+		})
+	})
+
+	// ตั้งค่าสถานะตู้เต็ม/ไม่เต็ม
+	app.Post("/api/dashboard/cabinet/set-full", func(c *fiber.Ctx) error {
+		type SetFullRequest struct {
+			IsFull bool `json:"is_full"`
+		}
+		req := new(SetFullRequest)
+		if err := c.BodyParser(req); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "ข้อมูลไม่ถูกต้อง"})
+		}
+		hw.SetFull(req.IsFull)
+		return c.JSON(fiber.Map{
+			"message": "ตั้งค่าสถานะตู้สำเร็จ",
+			"is_full": hw.IsFull,
 		})
 	})
 

@@ -19,11 +19,13 @@ export default function TabletPage() {
   const [book, setBook] = useState<Book | null>(null);
   const [activeBorrows, setActiveBorrows] = useState<BorrowRecord[]>([]);
   const [capacity, setCapacity] = useState(0);
+  const [isFull, setIsFull] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [time, setTime] = useState("");
   const [motorOpen, setMotorOpen] = useState(false);
   const motorOpenedRef = useRef(false);
+
 
   // เวลาปัจจุบัน
   useEffect(() => {
@@ -41,6 +43,7 @@ export default function TabletPage() {
         const res = await fetch(`${API}/status`);
         const data = await res.json();
         setCapacity(data.capacity);
+        setIsFull(data.is_full);
       } catch { }
     };
     fetch_();
@@ -88,7 +91,7 @@ export default function TabletPage() {
   useEffect(() => {
     if (step === "check-book" && !motorOpenedRef.current) {
       motorOpenedRef.current = true;
-      fetch(`${API}/dashboard/motor/open`, { method: "POST" }).catch(() => {});
+      fetch(`${API}/dashboard/motor/open`, { method: "POST" }).catch(() => { });
     } else if (step !== "check-book") {
       motorOpenedRef.current = false;
     }
@@ -196,7 +199,7 @@ export default function TabletPage() {
   const handleReset = () => {
     // ปิดตู้ถ้ายังเปิดอยู่
     if (motorOpen) {
-      fetch(`${API}/dashboard/motor/close`, { method: "POST" }).catch(() => {});
+      fetch(`${API}/dashboard/motor/close`, { method: "POST" }).catch(() => { });
     }
     motorOpenedRef.current = false;
     setStep("select-user");
@@ -249,6 +252,73 @@ export default function TabletPage() {
   ];
   const currentStepIndex = steps.findIndex((s) => s.key === step);
 
+  // แสดงหน้าตู้เต็มถ้าความจุเต็ม
+  if (isFull) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-blue-950 to-blue-900 flex flex-col">
+
+        {/* Header */}
+        <div className="bg-blue-950 px-8 py-4 flex justify-between items-center border-b border-blue-800">
+          <div className="flex items-center gap-4">
+            <div className="bg-blue-700 rounded-full w-12 h-12 flex items-center justify-center text-2xl">📚</div>
+            <div>
+              <p className="text-blue-300 text-xs tracking-widest uppercase">Book Return Station</p>
+              <h1 className="text-white text-lg font-bold">ระบบรับคืนหนังสืออัตโนมัติ</h1>
+            </div>
+          </div>
+          <div className="text-right">
+            <p className="text-blue-400 text-xs">เวลาปัจจุบัน</p>
+            <p className="text-white text-2xl font-mono font-bold">{time}</p>
+          </div>
+        </div>
+
+        {/* หน้าแจ้งเตือนตู้เต็ม */}
+        <div className="flex-1 flex items-center justify-center p-8">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md p-10 text-center">
+
+            {/* ไอคอนแจ้งเตือน */}
+            <div className="w-24 h-24 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-6">
+              <span className="text-5xl">🚫</span>
+            </div>
+
+            <h2 className="text-2xl font-bold text-red-600 mb-3">
+              ขออภัย — ตู้เต็มแล้ว
+            </h2>
+
+            <p className="text-gray-600 mb-2 text-lg">
+              ขณะนี้ตู้รับคืนหนังสือเต็มแล้ว
+            </p>
+            <p className="text-gray-500 text-sm mb-6">
+              ไม่สามารถรับคืนหนังสือได้ในขณะนี้
+            </p>
+
+            {/* คำแนะนำ */}
+            <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-6 text-left">
+              <p className="text-blue-700 font-semibold text-sm mb-2">📋 กรุณาดำเนินการดังนี้</p>
+              <ul className="text-blue-600 text-sm space-y-1">
+                <li>• ติดต่อบรรณารักษ์ที่เคาน์เตอร์</li>
+                <li>• คืนหนังสือที่เคาน์เตอร์บริการโดยตรง</li>
+                <li>• รอจนกว่าเจ้าหน้าที่จะเคลียร์ตู้</li>
+              </ul>
+            </div>
+
+            {/* แจ้งว่าอัปเดตอัตโนมัติ */}
+            <p className="text-gray-400 text-xs">
+              🔄 ระบบจะอัปเดตสถานะอัตโนมัติทุก 3 วินาที
+              <br />หน้านี้จะกลับสู่ปกติเมื่อตู้มีพื้นที่ว่าง
+            </p>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="text-center py-3 text-blue-600 text-xs border-t border-blue-800">
+          หากพบปัญหา กรุณาติดต่อบรรณารักษ์ที่เคาน์เตอร์
+        </div>
+
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-blue-950 to-blue-900 flex flex-col select-none">
 
@@ -267,9 +337,9 @@ export default function TabletPage() {
           <p className="text-blue-400 text-xs">เวลาปัจจุบัน</p>
           <p className="text-white text-2xl font-mono font-bold">{time}</p>
           <div className="flex items-center gap-2 mt-1 justify-end">
-            <div className={`w-2 h-2 rounded-full ${motorOpen ? "bg-yellow-400 animate-pulse" : capacity >= 100 ? "bg-red-400" : "bg-green-400"}`} />
-            <p className={`text-xs ${motorOpen ? "text-yellow-300" : capacity >= 100 ? "text-red-300" : "text-green-300"}`}>
-              {motorOpen ? "ตู้เปิดอยู่" : capacity >= 100 ? "ตู้เต็ม" : `ความจุ ${capacity}%`}
+            <div className={`w-2 h-2 rounded-full ${motorOpen ? "bg-yellow-400 animate-pulse" : isFull ? "bg-red-400" : "bg-green-400"}`} />
+            <p className={`text-xs ${motorOpen ? "text-yellow-300" : isFull ? "text-red-300" : "text-green-300"}`}>
+              {motorOpen ? "ตู้เปิดอยู่" : isFull ? "ตู้เต็ม" : "ตู้ว่าง"}
             </p>
           </div>
         </div>

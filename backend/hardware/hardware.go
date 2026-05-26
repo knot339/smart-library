@@ -6,10 +6,11 @@ type MockHardware struct {
 	Capacity    int
 	MotorStatus string
 	MotorLogs   []string
+	IsFull      bool
 }
 
 func NewMockHardware() *MockHardware {
-	return &MockHardware{Capacity: 0, MotorStatus: "closed", MotorLogs: []string{}}
+	return &MockHardware{Capacity: 0, MotorStatus: "closed", MotorLogs: []string{}, IsFull: false}
 }
 
 func (m *MockHardware) addLog(msg string) {
@@ -52,4 +53,13 @@ func (m *MockHardware) AddBook() int {
 	}
 	m.addLog(fmt.Sprintf("📦 รับหนังสือเข้าตู้ — ความจุ %d%%", m.Capacity))
 	return m.Capacity
+}
+
+func (m *MockHardware) SetFull(full bool) {
+	m.IsFull = full
+	if full {
+		m.addLog("🔴 ตู้เต็ม")
+	} else {
+		m.addLog("🟢 ตู้ว่าง")
+	}
 }
