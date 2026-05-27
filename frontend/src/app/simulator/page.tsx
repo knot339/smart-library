@@ -1,7 +1,8 @@
 "use client";
 import { useState, useEffect } from "react";
 
-const API = "http://localhost:8080";
+//const API = "http://localhost:8080";
+const API = "http://10.183.255.90:8080";
 
 export default function SimulatorPage() {
   const [capacity, setCapacity] = useState(0);
@@ -12,6 +13,7 @@ export default function SimulatorPage() {
   const [barcodeInput, setBarcodeInput] = useState("");
   const [rfidInput, setRfidInput] = useState("");
   const [connectedClients, setConnectedClients] = useState(0);
+  const [ledOn, setLedOn] = useState(false);//testEsp32Conectivity
 
   useEffect(() => {
     const fetchStatus = async () => {
@@ -87,6 +89,22 @@ export default function SimulatorPage() {
 
   // รวม log ทั้งสองแหล่งเรียงตามเวลา โดย Frontend log อยู่บน Motor log อยู่ล่าง
   const allLogs = [...log, ...[...motorLogs].reverse()];
+
+  //test ESP32 connectivity (LED on/off)
+  const toggleLED = async (on: boolean) => {
+    try {
+      const res = await fetch(`${API}/api/simulator/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "led", value: on ? "on" : "off" }),
+      });
+      const data = await res.json();
+      setLedOn(on);
+      addLog(`💡 LED → ${on ? "เปิด" : "ปิด"} (ส่งไปยัง ${data.clients} ESP32)`);
+    } catch {
+      addLog("❌ ส่งคำสั่ง LED ไม่ได้");
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gray-900 text-white p-6">
@@ -176,6 +194,31 @@ export default function SimulatorPage() {
           </div>
         </div>
 
+        {/* ควบคุม Built-in LED */}
+        <div className="bg-gray-800 rounded-lg p-4 mb-4">
+          <h2 className="font-semibold mb-1">💡 ควบคุม Built-in LED (ESP32)</h2>
+          <p className="text-gray-400 text-xs mb-3">สั่งเปิด/ปิด LED ที่ขา GPIO2 ของ ESP32</p>
+          <div className="flex items-center gap-4">
+            <div className={`w-8 h-8 rounded-full border-2 transition-all ${ledOn ? "bg-yellow-400 border-yellow-300 shadow-lg shadow-yellow-400/50" : "bg-gray-600 border-gray-500"}`} />
+            <div className="flex gap-2 flex-1">
+              <button
+                onClick={() => toggleLED(true)}
+                disabled={ledOn}
+                className="flex-1 bg-yellow-500 hover:bg-yellow-400 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-bold py-2 rounded-lg transition"
+              >
+                💡 เปิด LED
+              </button>
+              <button
+                onClick={() => toggleLED(false)}
+                disabled={!ledOn}
+                className="flex-1 bg-gray-500 hover:bg-gray-400 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-bold py-2 rounded-lg transition"
+              >
+                🌑 ปิด LED
+              </button>
+            </div>
+          </div>
+        </div>
+
         {/* Mock Terminal */}
         <div className="bg-black rounded-lg p-4 font-mono text-sm">
           <p className="text-green-400 mb-2">▶ Mock Terminal Log</p>
@@ -184,12 +227,12 @@ export default function SimulatorPage() {
             <p key={i} className={`
               ${entry.includes("❌") ? "text-red-400" :
                 entry.includes("⚠️") ? "text-yellow-400" :
-                entry.includes("📡") ? "text-blue-300" :
-                entry.includes("🔒") ? "text-blue-300" :
-                entry.includes("🔓") ? "text-green-300" :
-                entry.includes("📤") ? "text-orange-300" :
-                entry.includes("📦") ? "text-yellow-300" :
-                "text-green-300"}
+                  entry.includes("📡") ? "text-blue-300" :
+                    entry.includes("🔒") ? "text-blue-300" :
+                      entry.includes("🔓") ? "text-green-300" :
+                        entry.includes("📤") ? "text-orange-300" :
+                          entry.includes("📦") ? "text-yellow-300" :
+                            "text-green-300"}
             `}>
               {entry}
             </p>

@@ -44,6 +44,7 @@ services:
     environment:
       - WATCHPACK_POLLING=true
       - CHOKIDAR_USEPOLLING=true
+      - HOSTNAME=0.0.0.0   
     depends_on:
       - backend
     restart: unless-stopped

@@ -1,7 +1,8 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 
-const API = "http://localhost:8080/api";
+//const API = "http://localhost:8080/api";
+const API = "http://10.183.255.90:8080/api";
 
 type UserType = "student" | "external";
 type Step = "select-user" | "identify" | "check-book" | "drop" | "success";
@@ -53,7 +54,8 @@ export default function TabletPage() {
 
   // รับสัญญาณจาก Simulator ผ่าน WebSocket
   useEffect(() => {
-    const ws = new WebSocket("ws://localhost:8080/ws/tablet");
+    //const ws = new WebSocket("ws://localhost:8080/ws/tablet");
+    const ws = new WebSocket("ws://10.183.255.90:8080/ws/tablet");
 
     ws.onmessage = (event) => {
       const msg = JSON.parse(event.data);
