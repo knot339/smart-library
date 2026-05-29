@@ -37,7 +37,7 @@ export default function TabletPage() {
     return () => clearInterval(t);
   }, []);
 
-  // ดึงสถานะตู้
+  // ดึงสถานะตู้จากเซิร์ฟเวอร์
   useEffect(() => {
     const fetch_ = async () => {
       try {
@@ -45,6 +45,8 @@ export default function TabletPage() {
         const data = await res.json();
         setCapacity(data.capacity);
         setIsFull(data.is_full);
+        // อัพเดตสถานะมอเตอร์จากเซิร์ฟเวอร์
+        setMotorOpen(data.motor_status === "open" || data.motor_status === "dump");
       } catch { }
     };
     fetch_();
@@ -94,10 +96,19 @@ export default function TabletPage() {
     if (step === "check-book" && !motorOpenedRef.current) {
       motorOpenedRef.current = true;
       fetch(`${API}/dashboard/motor/open`, { method: "POST" }).catch(() => { });
+      setMotorOpen(true);
     } else if (step !== "check-book") {
       motorOpenedRef.current = false;
     }
   }, [step]);
+
+  // ปิดตู้เมื่อกลับหน้าแรก (ถ้าเปิดอยู่)
+  useEffect(() => {
+    if (step === "select-user" && motorOpen) {
+      fetch(`${API}/dashboard/motor/close`, { method: "POST" }).catch(() => { });
+      setMotorOpen(false);
+    }
+  }, [step, motorOpen]);
 
   const handleSelectUser = (type: UserType) => {
     setUserType(type);

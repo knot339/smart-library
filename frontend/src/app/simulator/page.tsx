@@ -1,8 +1,8 @@
 "use client";
 import { useState, useEffect } from "react";
 
-//const API = "http://localhost:8080";
-const API = "http://10.183.255.90:8080";
+//const API = "http://localhost:8080/api";
+const API = "http://10.183.255.90:8080/api";
 
 export default function SimulatorPage() {
   const [capacity, setCapacity] = useState(0);
@@ -18,7 +18,7 @@ export default function SimulatorPage() {
   useEffect(() => {
     const fetchStatus = async () => {
       try {
-        const res = await fetch(`${API}/api/status`);
+        const res = await fetch(`${API}/status`);
         const data = await res.json();
         setCapacity(data.capacity);
         setIsFull(data.is_full);
@@ -44,7 +44,7 @@ export default function SimulatorPage() {
     }
     setLoading(true);
     try {
-      const res = await fetch(`${API}/api/simulator/send`, {
+      const res = await fetch(`${API}/simulator/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ type, value }),
@@ -60,7 +60,7 @@ export default function SimulatorPage() {
   };
 
   const handleReset = async () => {
-    await fetch(`${API}/api/simulate/reset`, { method: "POST" });
+    await fetch(`${API}/simulate/reset`, { method: "POST" });
     setCapacity(0);
     setIsFull(false);
     addLog("🔄 รีเซ็ตตู้แล้ว");
@@ -68,7 +68,7 @@ export default function SimulatorPage() {
 
   const setFullState = async (full: boolean) => {
     try {
-      const res = await fetch(`${API}/api/dashboard/cabinet/set-full`, {
+      const res = await fetch(`${API}/dashboard/cabinet/set-full`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ is_full: full }),
@@ -93,7 +93,7 @@ export default function SimulatorPage() {
   //test ESP32 connectivity (LED on/off)
   const toggleLED = async (on: boolean) => {
     try {
-      const res = await fetch(`${API}/api/simulator/send`, {
+      const res = await fetch(`${API}/simulator/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ type: "led", value: on ? "on" : "off" }),
