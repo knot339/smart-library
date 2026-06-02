@@ -18,7 +18,7 @@ func main() {
 	app.Use(cors.New(cors.Config{
 		AllowOrigins: "*",
 		AllowMethods: "GET,POST,PUT,DELETE",
-		AllowHeaders: "Content-Type",
+		AllowHeaders: "Origin, Content-Type, Accept",
 	}))
 
 	hw := hardware.NewMockHardware()
@@ -28,6 +28,9 @@ func main() {
 
 	// Simulator ส่งค่าจำลองมาที่นี่
 	app.Post("/api/simulator/send", handlers.SimulatorSend)
+
+	// ESP32 WebSocket endpoint
+	app.Get("/ws/esp32", websocket.New(handlers.ESP32WS))
 
 	// Hardware simulation
 	app.Get("/api/status", func(c *fiber.Ctx) error {
