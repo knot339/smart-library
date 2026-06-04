@@ -1,8 +1,8 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
 
-//const API = "http://localhost:8080/api";
-const API = "http://10.183.255.90:8080/api";
+const API = "http://localhost:8080/api";
+//const API = "http://10.183.255.90:8080/api";
 // ---- Types ----
 type Book = { id: number; isbn: string; title: string; author: string; category: string; stock: number };
 type Borrower = { id: number; code: string; name: string; type: string; phone: string };

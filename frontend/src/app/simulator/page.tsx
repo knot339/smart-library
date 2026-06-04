@@ -1,8 +1,8 @@
 "use client";
 import { useState, useEffect } from "react";
 
-//const API = "http://localhost:8080/api";
-const API = "http://10.183.255.90:8080/api";
+const API = "http://localhost:8080/api";
+//const API = "http://10.183.255.90:8080/api";
 
 export default function SimulatorPage() {
   const [capacity, setCapacity] = useState(0);
