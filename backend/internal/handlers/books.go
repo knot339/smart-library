@@ -1,8 +1,8 @@
 package handlers
 
 import (
-	"smart-library-api/database"
-	"smart-library-api/models"
+	"smart-library-api/internal/database"
+	"smart-library-api/internal/models"
 
 	"github.com/gofiber/fiber/v2"
 )

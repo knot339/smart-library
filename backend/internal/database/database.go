@@ -3,7 +3,7 @@ package database
 import (
 	"fmt"
 	"os"
-	"smart-library-api/models"
+	"smart-library-api/internal/models"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -26,7 +26,7 @@ func Connect() {
 		panic("เชื่อมต่อฐานข้อมูลไม่ได้: " + err.Error())
 	}
 
-	// สร้างตารางอัตโนมัติ
+	// ดำเนินการสร้างหรืออัปเดตโครงสร้างตารางในฐานข้อมูลอัตโนมัติ
 	db.AutoMigrate(
 		&models.Book{},
 		&models.Borrower{},

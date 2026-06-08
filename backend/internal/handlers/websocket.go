@@ -10,17 +10,17 @@ import (
 )
 
 type WSMessage struct {
-	Type  string `json:"type"`  // "barcode" | "rfid"
-	Value string `json:"value"` // ค่าที่อ่านได้
+	Type  string `json:"type"`  // ประเภทของอุปกรณ์ ("barcode" หรือ "rfid")
+	Value string `json:"value"` // ข้อมูลที่อ่านได้จากอุปกรณ์
 }
 
-// เก็บ client ที่เชื่อมต่ออยู่ทั้งหมด
+// ตัวแปรสำหรับจัดเก็บรายชื่ออุปกรณ์แท็บเล็ตที่เชื่อมต่ออยู่
 var (
 	tabletClients = make(map[*websocket.Conn]bool)
 	clientMu      sync.Mutex
 )
 
-// Handler สำหรับ Tablet เชื่อมต่อ WebSocket
+// ฟังก์ชันจัดการการเชื่อมต่อผ่าน WebSocket สำหรับอุปกรณ์แท็บเล็ต
 func TabletWS(c *websocket.Conn) {
 	clientMu.Lock()
 	tabletClients[c] = true
@@ -36,7 +36,7 @@ func TabletWS(c *websocket.Conn) {
 		log.Println("Tablet disconnected")
 	}()
 
-	// รอรับข้อความ (keep-alive)
+	// รอรับข้อความเพื่อรักษาสถานะการเชื่อมต่อ (Keep-Alive)
 	for {
 		if _, _, err := c.ReadMessage(); err != nil {
 			break
@@ -44,13 +44,13 @@ func TabletWS(c *websocket.Conn) {
 	}
 }
 
-// esp32Clients
+// ตัวแปรสำหรับจัดเก็บรายชื่ออุปกรณ์ ESP32 ที่เชื่อมต่ออยู่
 var (
 	esp32Clients = make(map[*websocket.Conn]bool)
 	esp32Mu      sync.Mutex
 )
 
-// ESP32 เชื่อมต่อที่นี่
+// ฟังก์ชันจัดการการเชื่อมต่อผ่าน WebSocket สำหรับอุปกรณ์ ESP32
 func ESP32WS(c *websocket.Conn) {
 	esp32Mu.Lock()
 	esp32Clients[c] = true
@@ -81,7 +81,7 @@ func SimulatorSend(c *fiber.Ctx) error {
 
 	payload, _ := json.Marshal(msg)
 
-	// ส่งไปยัง Tablet (barcode, rfid)
+	// ส่งสัญญาณไปยังอุปกรณ์แท็บเล็ต (ข้อมูลจาก Barcode หรือ RFID)
 	if msg.Type == "barcode" || msg.Type == "rfid" {
 		clientMu.Lock()
 		for client := range tabletClients {
@@ -93,7 +93,7 @@ func SimulatorSend(c *fiber.Ctx) error {
 		clientMu.Unlock()
 	}
 
-	// ส่งไปยัง ESP32 (led, motor)
+	// ส่งคำสั่งไปยังอุปกรณ์ ESP32 (สั่งการ LED หรือมอเตอร์)
 	if msg.Type == "led" || msg.Type == "motor" {
 		esp32Mu.Lock()
 		for client := range esp32Clients {

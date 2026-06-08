@@ -1,24 +1,24 @@
 package handlers
 
 import (
-	"smart-library-api/database"
-	"smart-library-api/models"
+	"smart-library-api/internal/database"
+	"smart-library-api/internal/models"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 )
 
-// ค้นหาผู้ยืมจาก code
+// ค้นหาข้อมูลผู้ยืมจากรหัสประจำตัว หรือหมายเลขโทรศัพท์
 func FindBorrowerByCode(c *fiber.Ctx) error {
 	code := c.Params("code")
 	var borrower models.Borrower
-	if err := database.DB.Where("code = ?", code).First(&borrower).Error; err != nil {
+	if err := database.DB.Where("code = ? OR phone = ?", code, code).First(&borrower).Error; err != nil {
 		return c.Status(404).JSON(fiber.Map{"error": "ไม่พบข้อมูลในระบบ กรุณาติดต่อบรรณารักษ์"})
 	}
 	return c.JSON(borrower)
 }
 
-// ค้นหาหนังสือจาก ISBN
+// ค้นหาข้อมูลหนังสือจากรหัส ISBN
 func FindBookByISBN(c *fiber.Ctx) error {
 	isbn := c.Params("isbn")
 	var book models.Book
@@ -28,7 +28,7 @@ func FindBookByISBN(c *fiber.Ctx) error {
 	return c.JSON(book)
 }
 
-// ดึงรายการยืมที่ยังไม่คืนของผู้ยืม
+// ค้นหารายการหนังสือที่ผู้ยืมยังไม่ได้ดำเนินการส่งคืน
 func GetActiveBorrows(c *fiber.Ctx) error {
 	borrowerID := c.Params("borrower_id")
 	var records []models.BorrowRecord
@@ -38,27 +38,36 @@ func GetActiveBorrows(c *fiber.Ctx) error {
 	return c.JSON(records)
 }
 
-// บันทึกการคืนหนังสือ (ใช้ borrower_id + book_id)
+// บันทึกการทำรายการคืนหนังสือเข้าสู่ระบบ (อ้างอิงจากรหัสหนังสือ)
+// ค้นหารายการยืมล่าสุดที่ยังค้างส่ง และบันทึกหมายเลขโทรศัพท์ของผู้ดำเนินการคืน
 func ReturnByBorrowerAndBook(c *fiber.Ctx) error {
 	type ReturnRequest struct {
-		BorrowerID uint `json:"borrower_id"`
-		BookID     uint `json:"book_id"`
+		BookID          uint   `json:"book_id"`
+		BorrowerID      uint   `json:"borrower_id"`
+		ReturnedByPhone string `json:"returned_by_phone"`
 	}
 	req := new(ReturnRequest)
 	if err := c.BodyParser(req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "ข้อมูลไม่ถูกต้อง"})
 	}
 
-	// หา borrow record ที่ยังไม่คืน
+	// ค้นหาข้อมูลการทำรายการยืมล่าสุดที่สถานะยังเป็น 'กำลังยืม'
 	var record models.BorrowRecord
 	err := database.DB.
-		Where("borrower_id = ? AND book_id = ? AND status = ?", req.BorrowerID, req.BookID, "borrowed").
+		Where("book_id = ? AND status = ?", req.BookID, "borrowed").
+		Order("borrowed_at DESC").
 		First(&record).Error
+
 	if err != nil {
 		return c.Status(404).JSON(fiber.Map{"error": "ไม่พบรายการยืมหนังสือเล่มนี้"})
 	}
 
-	// อัปเดตสถานะเป็น returned
+	// บันทึกหมายเลขโทรศัพท์ของผู้ที่นำหนังสือมาคืน
+	if req.ReturnedByPhone != "" {
+		record.ReturnedByPhone = req.ReturnedByPhone
+	}
+
+	// อัปเดตสถานะการทำรายการเป็น 'คืนแล้ว'
 	now := time.Now()
 	record.ReturnedAt = &now
 	record.Status = "returned"
@@ -67,7 +76,7 @@ func ReturnByBorrowerAndBook(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"message": "บันทึกการคืนสำเร็จ", "record_id": record.ID})
 }
 
-// API เดิม
+// API เพิ่มเติมสำหรับการจัดการข้อมูลการยืม-คืนแบบทั่วไป
 func GetBorrowRecords(c *fiber.Ctx) error {
 	var records []models.BorrowRecord
 	database.DB.Preload("Book").Preload("Borrower").Find(&records)

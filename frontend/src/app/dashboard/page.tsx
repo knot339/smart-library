@@ -1,18 +1,16 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
-
-const API = "http://localhost:8080/api";
-//const API = "http://10.183.255.90:8080/api";
+import { API_BASE_URL as API } from "../../lib/config";
 
 type MotorStatus = "closed" | "open" | "dump";
 type BookInCabinet = {
     id: number; title: string; author: string;
-    isbn: string; returned_at: string; returned_by: string;
+    isbn: string; returned_at: string; returned_by: string; returned_by_phone?: string;
 };
 type ReturnRecord = {
-    id: number; returned_at: string;
+    id: number; returned_at: string; returned_by_phone: string;
     book: { title: string; isbn: string };
-    borrower: { name: string; code: string };
+    borrower: { name: string; code: string; phone?: string };
 };
 
 const MOTOR_CONFIG: Record<MotorStatus, {
@@ -160,7 +158,7 @@ export default function DashboardPage() {
                 {/* Status Cards */}
                 <div className="grid grid-cols-3 gap-4 mb-6">
 
-                    {/* การเชื่อมต่อ */}
+                    {/* สถานะการเชื่อมต่อกับระบบฐานข้อมูลและเซิร์ฟเวอร์ */}
                     <div className="bg-white rounded-xl shadow p-5 flex items-center gap-4">
                         <div className={`w-14 h-14 rounded-full flex items-center justify-center text-2xl ${cabinetOnline ? "bg-green-100" : "bg-red-100"}`}>
                             {cabinetOnline ? "✅" : "❌"}
@@ -173,7 +171,7 @@ export default function DashboardPage() {
                         </div>
                     </div>
 
-                    {/* สถานะตู้ */}
+                    {/* สถานะการทำงานปัจจุบันของตู้รับคืนหนังสือ */}
                     <div className="bg-white rounded-xl shadow p-5 flex items-center gap-4">
                         <div className={`w-14 h-14 rounded-full flex items-center justify-center text-2xl ${motor.cardBg}`}>
                             {motor.icon}
@@ -185,7 +183,7 @@ export default function DashboardPage() {
                         </div>
                     </div>
 
-                    {/* สถานะความจุตู้ */}
+                    {/* สถานะปริมาณความจุของหนังสือภายในตู้รับคืน */}
                     <div className="bg-white rounded-xl shadow p-5">
                         <p className="text-gray-400 text-sm mb-3">สถานะความจุ</p>
                         <div className="flex items-center justify-between">
@@ -206,14 +204,14 @@ export default function DashboardPage() {
                     </div>
                 </div>
 
-                {/* ควบคุมตู้ */}
+                {/* แผงควบคุมการทำงานของมอเตอร์ตู้รับคืนหนังสือ */}
                 <div className="bg-white rounded-xl shadow p-6 mb-6">
                     <h2 className="text-lg font-bold text-gray-700 mb-2">🎛️ ควบคุมตู้รับคืน</h2>
                     <p className="text-gray-400 text-xs mb-4">เลือกสถานะที่ต้องการสั่งงานมอเตอร์แกนชัก</p>
 
                     <div className="grid grid-cols-3 gap-4">
 
-                        {/* ปุ่มปิด */}
+                        {/* ปุ่มควบคุม: ปิดตู้รับคืน */}
                         <button
                             onClick={() => sendMotorCommand("close")}
                             disabled={loadingMotor !== "" || motorStatus === "closed"}
@@ -224,7 +222,7 @@ export default function DashboardPage() {
                             <span className="text-xs font-normal opacity-80">แกนชักยืดสุด</span>
                         </button>
 
-                        {/* ปุ่มเปิด */}
+                        {/* ปุ่มควบคุม: เปิดรับหนังสือ */}
                         <button
                             onClick={() => sendMotorCommand("open")}
                             disabled={loadingMotor !== "" || motorStatus === "open"}
@@ -235,7 +233,7 @@ export default function DashboardPage() {
                             <span className="text-xs font-normal opacity-80">แกนชักหดบางส่วน</span>
                         </button>
 
-                        {/* ปุ่มเท */}
+                        {/* ปุ่มควบคุม: เทหนังสือลงในตู้ */}
                         <button
                             onClick={() => sendMotorCommand("dump")}
                             disabled={loadingMotor !== "" || motorStatus === "dump"}
@@ -249,7 +247,7 @@ export default function DashboardPage() {
 
 
 
-                    {/* แสดงสถานะปัจจุบัน */}
+                    {/* ส่วนแสดงสถานะการทำงานปัจจุบันของมอเตอร์ */}
                     <div className={`mt-4 rounded-lg px-4 py-3 flex items-center gap-3 ${motor.cardBg}`}>
                         <span className="text-xl">{motor.icon}</span>
                         <div>
@@ -262,7 +260,7 @@ export default function DashboardPage() {
                         ⚠️ ตรวจสอบให้แน่ใจก่อนสั่งงานมอเตอร์ทุกครั้ง
                     </p>
 
-                    {/* ปุ่มรีเซ็ตรายการในตู้ */}
+                    {/* ส่วนการดำเนินการล้างข้อมูลรายการหนังสือและความจุตู้รับคืน */}
                     <div className="mt-4 border-t pt-4">
                         <div className="flex items-center justify-between">
                             <div>
@@ -279,7 +277,7 @@ export default function DashboardPage() {
                     </div>
                 </div>
 
-                {/* Tab */}
+                {/* ส่วนการจัดการแท็บแสดงผลข้อมูลรายการในตู้และประวัติการคืน */}
                 <div className="bg-white rounded-xl shadow overflow-hidden">
                     <div className="flex border-b">
                         {([["books", `📦 หนังสือในตู้ (${booksInCabinet.length} เล่ม)`],
@@ -291,7 +289,7 @@ export default function DashboardPage() {
                         ))}
                     </div>
 
-                    {/* หนังสือในตู้ */}
+                    {/* เนื้อหาแท็บ: แสดงรายการหนังสือที่อยู่ภายในตู้รับคืน */}
                     {tab === "books" && (
                         booksInCabinet.length === 0
                             ? <div className="text-center py-12 text-gray-400"><p className="text-4xl mb-2">📭</p><p>ไม่มีหนังสือในตู้ขณะนี้</p></div>
@@ -308,20 +306,20 @@ export default function DashboardPage() {
                                             <td className="px-4 py-3 text-gray-600">{b.author}</td>
                                             <td className="px-4 py-3 font-mono text-gray-400 text-xs">{b.isbn}</td>
                                             <td className="px-4 py-3 text-gray-500">{fmtDate(b.returned_at)}</td>
-                                            <td className="px-4 py-3 text-gray-600">{b.returned_by}</td>
+                                            <td className="px-4 py-3 text-gray-600 font-mono">{b.returned_by_phone || b.returned_by}</td>
                                         </tr>
                                     ))}
                                 </tbody>
                             </table>
                     )}
 
-                    {/* ประวัติการคืน */}
+                    {/* เนื้อหาแท็บ: แสดงประวัติการทำรายการคืนหนังสือล่าสุด */}
                     {tab === "history" && (
                         recentReturns.length === 0
                             ? <div className="text-center py-12 text-gray-400"><p className="text-4xl mb-2">📋</p><p>ยังไม่มีประวัติการคืน</p></div>
                             : <table className="w-full text-sm">
                                 <thead className="bg-blue-50 text-blue-900">
-                                    <tr>{["ชื่อหนังสือ", "ISBN", "ผู้คืน", "รหัส", "วันที่คืน"].map(h => (
+                                    <tr>{["ชื่อหนังสือ", "ISBN", "ผู้ยืม", "รหัส", "เบอร์โทรผู้คืน", "วันที่คืน"].map(h => (
                                         <th key={h} className="px-4 py-3 text-left font-semibold">{h}</th>
                                     ))}</tr>
                                 </thead>
@@ -332,6 +330,7 @@ export default function DashboardPage() {
                                             <td className="px-4 py-3 font-mono text-gray-400 text-xs">{r.book?.isbn}</td>
                                             <td className="px-4 py-3 text-gray-700">{r.borrower?.name}</td>
                                             <td className="px-4 py-3 text-gray-400">{r.borrower?.code}</td>
+                                            <td className="px-4 py-3 text-gray-500">{r.returned_by_phone || "-"}</td>
                                             <td className="px-4 py-3 text-gray-500">{fmtDate(r.returned_at)}</td>
                                         </tr>
                                     ))}
@@ -342,7 +341,7 @@ export default function DashboardPage() {
 
                 <p className="text-center text-gray-400 text-xs mt-4">🔄 ข้อมูลอัปเดตอัตโนมัติทุก 5 วินาที</p>
             </div>
-            {/* Modal ยืนยันรีเซ็ต */}
+            {/* หน้าต่างแจ้งเตือน (Modal) สำหรับยืนยันการล้างข้อมูลตู้รับคืน */}
             {confirmReset && (
                 <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
                     <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-8 text-center">

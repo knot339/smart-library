@@ -1,8 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
-
-const API = "http://localhost:8080/api";
-//const API = "http://10.183.255.90:8080/api";
+import { API_BASE_URL as API } from "../../lib/config";
 
 export default function SimulatorPage() {
   const [capacity, setCapacity] = useState(0);
@@ -13,7 +11,7 @@ export default function SimulatorPage() {
   const [barcodeInput, setBarcodeInput] = useState("");
   const [rfidInput, setRfidInput] = useState("");
   const [connectedClients, setConnectedClients] = useState(0);
-  const [ledOn, setLedOn] = useState(false);//testEsp32Conectivity
+  const [ledOn, setLedOn] = useState(false); // ใช้สำหรับทดสอบการเชื่อมต่อกับอุปกรณ์ ESP32
 
   useEffect(() => {
     const fetchStatus = async () => {
@@ -22,7 +20,7 @@ export default function SimulatorPage() {
         const data = await res.json();
         setCapacity(data.capacity);
         setIsFull(data.is_full);
-        setMotorLogs(data.motor_logs || []); // ← ดึง log มอเตอร์จาก Backend
+        setMotorLogs(data.motor_logs || []); // ดึงข้อมูลประวัติการทำงาน (log) ของมอเตอร์จาก Backend
       } catch (err) {
         console.error("Fetch status error:", err);
       }
@@ -87,10 +85,10 @@ export default function SimulatorPage() {
     return "bg-green-500";
   };
 
-  // รวม log ทั้งสองแหล่งเรียงตามเวลา โดย Frontend log อยู่บน Motor log อยู่ล่าง
+  // นำประวัติการทำงาน (Log) ทั้งสองแหล่งมารวมและเรียงตามลำดับเวลา โดยนำประวัติจาก Frontend ไว้ด้านบน
   const allLogs = [...log, ...[...motorLogs].reverse()];
 
-  //test ESP32 connectivity (LED on/off)
+  // ทดสอบการสั่งการเชื่อมต่อฮาร์ดแวร์ ESP32 (ทดสอบด้วยการเปิด-ปิด LED)
   const toggleLED = async (on: boolean) => {
     try {
       const res = await fetch(`${API}/simulator/send`, {
@@ -110,7 +108,7 @@ export default function SimulatorPage() {
     <div className="min-h-screen bg-gray-900 text-white p-6">
       <div className="max-w-2xl mx-auto">
 
-        {/* Header */}
+        {/* ส่วนหัวของหน้าต่างจำลอง (Header) */}
         <div className="mb-6">
           <h1 className="text-2xl font-bold">🛠️ Simulator Dashboard</h1>
           <p className="text-gray-400 text-sm">จำลองฮาร์ดแวร์ — สำหรับนักพัฒนาเท่านั้น</p>
@@ -120,7 +118,7 @@ export default function SimulatorPage() {
           </div>
         </div>
 
-        {/* สถานะตู้ */}
+        {/* ส่วนการแสดงผลและปรับแต่งสถานะของตู้รับคืน */}
         <div className="bg-gray-800 rounded-lg p-4 mb-4">
           <div className="flex justify-between items-center mb-4">
             <p className="font-semibold">สถานะตู้รับคืน</p>
@@ -148,7 +146,7 @@ export default function SimulatorPage() {
           </button>
         </div>
 
-        {/* จำลอง Barcode Scanner */}
+        {/* ส่วนการจำลองการทำงานของเครื่องอ่านบาร์โค้ด (Barcode Scanner) */}
         <div className="bg-gray-800 rounded-lg p-4 mb-4">
           <h2 className="font-semibold mb-1">📷 จำลอง Barcode Scanner</h2>
           <p className="text-gray-400 text-xs mb-3">ส่งรหัสนักศึกษา/เบอร์โทร ไปยังหน้า Tablet (แทนการสแกนบัตร)</p>
@@ -171,7 +169,7 @@ export default function SimulatorPage() {
           </div>
         </div>
 
-        {/* จำลอง RFID Reader */}
+        {/* ส่วนการจำลองการทำงานของเครื่องอ่าน RFID (RFID Reader) */}
         <div className="bg-gray-800 rounded-lg p-4 mb-4">
           <h2 className="font-semibold mb-1">📡 จำลอง RFID Reader</h2>
           <p className="text-gray-400 text-xs mb-3">ส่ง ISBN หนังสือ ไปยังหน้า Tablet (แทนการสแกน RFID)</p>
@@ -194,7 +192,7 @@ export default function SimulatorPage() {
           </div>
         </div>
 
-        {/* ควบคุม Built-in LED */}
+        {/* ส่วนการควบคุมไฟ LED ของอุปกรณ์ ESP32 แบบแมนนวล */}
         <div className="bg-gray-800 rounded-lg p-4 mb-4">
           <h2 className="font-semibold mb-1">💡 ควบคุม Built-in LED (ESP32)</h2>
           <p className="text-gray-400 text-xs mb-3">สั่งเปิด/ปิด LED ที่ขา GPIO2 ของ ESP32</p>
@@ -219,7 +217,7 @@ export default function SimulatorPage() {
           </div>
         </div>
 
-        {/* Mock Terminal */}
+        {/* ส่วนแสดงข้อความจำลองประวัติการทำงานในรูปแบบ Terminal (Log) */}
         <div className="bg-black rounded-lg p-4 font-mono text-sm">
           <p className="text-green-400 mb-2">▶ Mock Terminal Log</p>
           {allLogs.length === 0 && <p className="text-gray-500">รอคำสั่ง...</p>}

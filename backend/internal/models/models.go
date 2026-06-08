@@ -1,0 +1,40 @@
+package models
+
+import "time"
+
+// โครงสร้างข้อมูลสำหรับตารางหนังสือ (Book)
+type Book struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	ISBN      string    `gorm:"uniqueIndex;size:20" json:"isbn"`
+	Title     string    `gorm:"size:200" json:"title"`
+	Author    string    `gorm:"size:100" json:"author"`
+	Category  string    `gorm:"size:50" json:"category"`
+	Stock     int       `gorm:"default:1" json:"stock"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// โครงสร้างข้อมูลสำหรับตารางผู้ใช้งาน (Borrower)
+type Borrower struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	Code      string    `gorm:"uniqueIndex;size:20" json:"code"` // รหัสประจำตัวนักศึกษา หรือหมายเลขโทรศัพท์
+	Name      string    `gorm:"size:100" json:"name"`
+	Type      string    `gorm:"size:20" json:"type"` // ประเภทผู้ใช้งาน ("student" หรือ "external")
+	Phone     string    `gorm:"size:15" json:"phone"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// โครงสร้างข้อมูลสำหรับตารางบันทึกการยืม-คืน (BorrowRecord)
+type BorrowRecord struct {
+	ID              uint       `gorm:"primaryKey" json:"id"`
+	BorrowerID      uint       `json:"borrower_id"`
+	Borrower        Borrower   `gorm:"foreignKey:BorrowerID" json:"borrower"`
+	BookID          uint       `json:"book_id"`
+	Book            Book       `gorm:"foreignKey:BookID" json:"book"`
+	BorrowedAt      time.Time  `json:"borrowed_at"`
+	DueDate         time.Time  `json:"due_date"`
+	ReturnedAt      *time.Time `json:"returned_at"` // วันและเวลาที่ดำเนินการคืน (nil หมายถึงยังไม่ส่งคืน)
+	ReturnedByPhone string     `gorm:"size:15" json:"returned_by_phone"` // หมายเลขโทรศัพท์ของผู้ที่ดำเนินการคืน (กรณีผู้ใช้ทั่วไป)
+	Status          string     `gorm:"size:20;default:'borrowed'" json:"status"` // สถานะการทำรายการ ("borrowed" หรือ "returned")
+}

@@ -1,9 +1,8 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
+import { API_BASE_URL as API } from "../../lib/config";
 
-const API = "http://localhost:8080/api";
-//const API = "http://10.183.255.90:8080/api";
-// ---- Types ----
+// ---- ประเภทข้อมูลที่ใช้ภายในระบบ (Types) ----
 type Book = { id: number; isbn: string; title: string; author: string; category: string; stock: number };
 type Borrower = { id: number; code: string; name: string; type: string; phone: string };
 type BorrowRecord = {
@@ -13,6 +12,7 @@ type BorrowRecord = {
   borrowed_at: string;
   due_date: string;
   returned_at: string | null;
+  returned_by_phone: string;
   status: string;
 };
 type Tab = "books" | "borrowers" | "borrows";
@@ -24,19 +24,19 @@ const emptyBorrow = { borrower_id: "", book_id: "" };
 export default function AdminPage() {
   const [tab, setTab] = useState<Tab>("books");
 
-  // ---- Books State ----
+  // ---- สถานะสำหรับจัดการข้อมูลหนังสือ ----
   const [books, setBooks] = useState<Book[]>([]);
   const [bookForm, setBookForm] = useState(emptyBook);
   const [editingBook, setEditingBook] = useState<Book | null>(null);
   const [bookModal, setBookModal] = useState(false);
 
-  // ---- Borrowers State ----
+  // ---- สถานะสำหรับจัดการข้อมูลผู้ยืม ----
   const [borrowers, setBorrowers] = useState<Borrower[]>([]);
   const [borrowerForm, setBorrowerForm] = useState(emptyBorrower);
   const [editingBorrower, setEditingBorrower] = useState<Borrower | null>(null);
   const [borrowerModal, setBorrowerModal] = useState(false);
 
-  // ---- Borrows State ----
+  // ---- สถานะสำหรับจัดการข้อมูลการยืม-คืน ----
   const [borrows, setBorrows] = useState<BorrowRecord[]>([]);
   const [borrowForm, setBorrowForm] = useState(emptyBorrow);
   const [borrowModal, setBorrowModal] = useState(false);
@@ -48,7 +48,7 @@ export default function AdminPage() {
     setTimeout(() => setMsg({ text: "", type: "" }), 3000);
   };
 
-  // ---- Fetch ----
+  // ---- ฟังก์ชันสำหรับดึงข้อมูลจากเซิร์ฟเวอร์ ----
   const fetchBooks = useCallback(async () => {
     const res = await fetch(`${API}/books`);
     setBooks(await res.json());
@@ -70,7 +70,7 @@ export default function AdminPage() {
     fetchBorrows();
   }, [fetchBooks, fetchBorrowers, fetchBorrows]);
 
-  // ---- Book Handlers ----
+  // ---- ฟังก์ชันสำหรับจัดการข้อมูลหนังสือ ----
   const handleSaveBook = async () => {
     const url = editingBook ? `${API}/books/${editingBook.id}` : `${API}/books`;
     const method = editingBook ? "PUT" : "POST";
@@ -91,7 +91,7 @@ export default function AdminPage() {
     setBookModal(true);
   };
 
-  // ---- Borrower Handlers ----
+  // ---- ฟังก์ชันสำหรับจัดการข้อมูลผู้ยืม ----
   const handleSaveBorrower = async () => {
     const url = editingBorrower ? `${API}/borrowers/${editingBorrower.id}` : `${API}/borrowers`;
     const method = editingBorrower ? "PUT" : "POST";
@@ -112,7 +112,7 @@ export default function AdminPage() {
     setBorrowerModal(true);
   };
 
-  // ---- Borrow Handlers ----
+  // ---- ฟังก์ชันสำหรับจัดการข้อมูลการยืม-คืน ----
   const handleCreateBorrow = async () => {
     const res = await fetch(`${API}/borrows`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ borrower_id: Number(borrowForm.borrower_id), book_id: Number(borrowForm.book_id) }) });
     if (res.ok) { notify("บันทึกการยืมสำเร็จ"); setBorrowModal(false); setBorrowForm(emptyBorrow); fetchBorrows(); }
@@ -137,7 +137,7 @@ export default function AdminPage() {
   return (
     <div className="min-h-screen bg-gray-100">
 
-      {/* Header */}
+      {/* ส่วนหัวของหน้าเพจ (Header) */}
       <div className="bg-blue-900 text-white px-8 py-4 flex items-center justify-between shadow">
         <div>
           <p className="text-blue-300 text-xs">Smart Library System</p>
@@ -150,7 +150,7 @@ export default function AdminPage() {
         )}
       </div>
 
-      {/* Tabs */}
+      {/* ส่วนการสลับแท็บแสดงข้อมูล (Tabs) */}
       <div className="bg-white border-b flex px-8">
         {([["books", "📚 หนังสือ"], ["borrowers", "👤 ผู้ยืม"], ["borrows", "📋 รายการยืม-คืน"]] as [Tab, string][]).map(([key, label]) => (
           <button key={key} onClick={() => setTab(key)}
@@ -162,7 +162,7 @@ export default function AdminPage() {
 
       <div className="p-8">
 
-        {/* ===== TAB: BOOKS ===== */}
+        {/* ===== ส่วนการแสดงผล: ข้อมูลหนังสือ ===== */}
         {tab === "books" && (
           <div>
             <div className="flex justify-between items-center mb-4">
@@ -203,7 +203,7 @@ export default function AdminPage() {
           </div>
         )}
 
-        {/* ===== TAB: BORROWERS ===== */}
+        {/* ===== ส่วนการแสดงผล: ข้อมูลผู้ยืม ===== */}
         {tab === "borrowers" && (
           <div>
             <div className="flex justify-between items-center mb-4">
@@ -247,7 +247,7 @@ export default function AdminPage() {
           </div>
         )}
 
-        {/* ===== TAB: BORROWS ===== */}
+        {/* ===== ส่วนการแสดงผล: รายการยืม-คืน ===== */}
         {tab === "borrows" && (
           <div>
             <div className="flex justify-between items-center mb-4">
@@ -260,14 +260,14 @@ export default function AdminPage() {
               <table className="w-full text-sm">
                 <thead className="bg-blue-50 text-blue-900">
                   <tr>
-                    {["ผู้ยืม", "หนังสือ", "วันที่ยืม", "กำหนดคืน", "วันที่คืน", "สถานะ", "จัดการ"].map(h => (
+                    {["ผู้ยืม", "หนังสือ", "วันที่ยืม", "กำหนดคืน", "วันที่คืน", "เบอร์โทรผู้คืน", "สถานะ", "จัดการ"].map(h => (
                       <th key={h} className="px-4 py-3 text-left font-semibold">{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {borrows.length === 0 && (
-                    <tr><td colSpan={7} className="text-center py-8 text-gray-400">ยังไม่มีรายการยืม-คืน</td></tr>
+                    <tr><td colSpan={8} className="text-center py-8 text-gray-400">ยังไม่มีรายการยืม-คืน</td></tr>
                   )}
                   {borrows.map((r, i) => (
                     <tr key={r.id} className={`${i % 2 === 0 ? "bg-white" : "bg-gray-50"} ${isOverdue(r.due_date, r.status) ? "border-l-4 border-red-400" : ""}`}>
@@ -278,6 +278,7 @@ export default function AdminPage() {
                         {fmtDate(r.due_date)}{isOverdue(r.due_date, r.status) && " ⚠️"}
                       </td>
                       <td className="px-4 py-3 text-gray-500">{r.returned_at ? fmtDate(r.returned_at) : "-"}</td>
+                      <td className="px-4 py-3 text-gray-600 font-mono">{r.returned_by_phone || "-"}</td>
                       <td className="px-4 py-3">
                         <span className={`px-2 py-1 rounded text-xs font-bold ${r.status === "returned" ? "bg-green-100 text-green-700" : isOverdue(r.due_date, r.status) ? "bg-red-100 text-red-700" : "bg-yellow-100 text-yellow-700"}`}>
                           {r.status === "returned" ? "คืนแล้ว" : isOverdue(r.due_date, r.status) ? "เกินกำหนด" : "กำลังยืม"}
@@ -298,7 +299,7 @@ export default function AdminPage() {
         )}
       </div>
 
-      {/* ===== MODAL: Book ===== */}
+      {/* ===== หน้าต่างสำหรับจัดการข้อมูลหนังสือ (Modal) ===== */}
       {bookModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8">
@@ -329,7 +330,7 @@ export default function AdminPage() {
         </div>
       )}
 
-      {/* ===== MODAL: Borrower ===== */}
+      {/* ===== หน้าต่างสำหรับจัดการข้อมูลผู้ยืม (Modal) ===== */}
       {borrowerModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8">
@@ -362,7 +363,7 @@ export default function AdminPage() {
         </div>
       )}
 
-      {/* ===== MODAL: Borrow ===== */}
+      {/* ===== หน้าต่างสำหรับจัดการรายการยืมหนังสือ (Modal) ===== */}
       {borrowModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8">

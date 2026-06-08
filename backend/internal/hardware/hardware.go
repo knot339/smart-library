@@ -13,6 +13,12 @@ func NewMockHardware() *MockHardware {
 	return &MockHardware{Capacity: 0, MotorStatus: "closed", MotorLogs: []string{}, IsFull: false}
 }
 
+var Shared *MockHardware
+
+func init() {
+	Shared = NewMockHardware()
+}
+
 func (m *MockHardware) addLog(msg string) {
 	m.MotorLogs = append([]string{msg}, m.MotorLogs...)
 	if len(m.MotorLogs) > 20 {
