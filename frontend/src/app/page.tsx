@@ -371,22 +371,22 @@ export default function TabletPage() {
       <div className="relative z-10 flex flex-col flex-1">
 
         {/* Header */}
-        <div className="bg-blue-950 px-8 py-4 flex justify-between items-center border-b border-blue-800 shadow-lg">
-          <div className="flex items-center gap-4">
-            <div className="bg-white rounded-full w-12 h-12 flex items-center justify-center p-1">
+        <div className="bg-blue-950 px-10 py-6 flex justify-between items-center border-b border-blue-800 shadow-lg">
+          <div className="flex items-center gap-5">
+            <div className="bg-white rounded-full w-16 h-16 flex items-center justify-center p-2">
               <img src="/images/LOGO-RUTS-07-2-copy.png" alt="RUTS Logo" className="w-full h-full object-contain" />
             </div>
             <div>
-              <p className="text-blue-300 text-xs tracking-widest uppercase">Book Return Station</p>
-              <h1 className="text-white text-lg font-bold">ระบบรับคืนหนังสืออัตโนมัติ</h1>
+              <p className="text-blue-300 text-base tracking-widest uppercase mb-1">Book Return Station</p>
+              <h1 className="text-white text-2xl font-bold">ระบบรับคืนหนังสืออัตโนมัติ</h1>
             </div>
           </div>
           <div className="text-right">
-            <p className="text-blue-400 text-xs">เวลาปัจจุบัน</p>
-            <p className="text-white text-2xl font-mono font-bold">{time}</p>
-            <div className="flex items-center gap-2 mt-1 justify-end">
-              <div className={`w-2 h-2 rounded-full ${motorOpen ? "bg-yellow-400 animate-pulse" : isFull ? "bg-red-400" : "bg-green-400"}`} />
-              <p className={`text-xs ${motorOpen ? "text-yellow-300" : isFull ? "text-red-300" : "text-green-300"}`}>
+            <p className="text-blue-400 text-base mb-1">เวลาปัจจุบัน</p>
+            <p className="text-white text-4xl font-mono font-bold">{time}</p>
+            <div className="flex items-center gap-2 mt-2 justify-end">
+              <div className={`w-3 h-3 rounded-full ${motorOpen ? "bg-yellow-400 animate-pulse" : isFull ? "bg-red-400" : "bg-green-400"}`} />
+              <p className={`text-base ${motorOpen ? "text-yellow-300" : isFull ? "text-red-300" : "text-green-300"}`}>
                 {motorOpen ? "ตู้เปิดอยู่" : isFull ? "ตู้เต็ม" : "ตู้ว่าง"}
               </p>
             </div>
@@ -394,21 +394,21 @@ export default function TabletPage() {
         </div>
 
         {/* Step Indicator */}
-        <div className="flex justify-center items-center gap-0 py-4 bg-blue-950 border-b border-blue-800 flex-wrap">
+        <div className="flex justify-center items-center gap-0 py-8 bg-blue-950 border-b border-blue-800 flex-wrap">
           {steps.map((s, i) => {
             const isDone = i < currentStepIndex;
             const isActive = i === currentStepIndex;
             return (
               <div key={s.key} className="flex items-center">
-                <div className={`flex items-center gap-1 px-3 py-2 rounded-full text-xs font-semibold transition-all
-                ${isActive ? "bg-white text-blue-900 shadow-lg" : isDone ? "bg-blue-500 text-white" : "bg-blue-800 text-blue-500"}`}>
-                  <span className={`w-4 h-4 rounded-full flex items-center justify-center text-xs font-bold
+                <div className={`flex items-center gap-3 px-6 py-3 rounded-full text-2xl font-semibold transition-all
+                ${isActive ? "bg-white text-blue-900 shadow-xl scale-105" : isDone ? "bg-blue-500 text-white" : "bg-blue-800 text-blue-500"}`}>
+                  <span className={`w-10 h-10 rounded-full flex items-center justify-center text-xl font-bold
                   ${isActive ? "bg-blue-900 text-white" : isDone ? "bg-white text-blue-600" : "bg-blue-700 text-blue-400"}`}>
                     {isDone ? "✓" : i + 1}
                   </span>
                   {s.label}
                 </div>
-                {i < steps.length - 1 && <div className={`w-4 h-0.5 ${i < currentStepIndex ? "bg-blue-500" : "bg-blue-800"}`} />}
+                {i < steps.length - 1 && <div className={`w-8 h-1 ${i < currentStepIndex ? "bg-blue-500" : "bg-blue-800"}`} />}
               </div>
             );
           })}
@@ -416,190 +416,213 @@ export default function TabletPage() {
 
         {/* Main Card */}
         <div className="flex-1 flex items-center justify-center p-8">
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md p-10">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-xl p-12 h-[750px] flex flex-col relative">
 
             {/* ขั้นตอนที่ 1: หน้าจอเริ่มต้นระบบการรับคืนหนังสือ */}
             {step === "select-user" && (
-              <div className="text-center">
-                <div className="text-7xl mb-6 soft-bounce">📚</div>
-                <h2 className="text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-blue-900 mb-3">ยินดีต้อนรับ</h2>
-                <p className="text-gray-600 mb-2 text-lg font-semibold">ระบบรับคืนหนังสืออัตโนมัติ</p>
-                <p className="text-gray-400 mb-12 text-sm">Smart Library Return Station</p>
+              <div className="text-center flex-1 flex flex-col justify-center">
+                <div className="text-8xl mb-8 soft-bounce">📚</div>
+                <h2 className="text-5xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-blue-900 mb-4">ยินดีต้อนรับ</h2>
+                <p className="text-gray-600 mb-3 text-2xl font-semibold">ระบบรับคืนหนังสืออัตโนมัติ</p>
+                <p className="text-gray-400 mb-14 text-lg">Smart Library Return Station</p>
                 <button onClick={() => { setStep("identify"); setInputCode(""); setErrorMsg(""); }}
                   className="w-full bg-gradient-to-r from-blue-600 to-blue-800 hover:from-blue-700 hover:to-blue-900 active:scale-95 text-white font-bold py-8 rounded-3xl text-4xl transition-all shadow-2xl transform hover:shadow-3xl">
                   เริ่มต้น
                 </button>
-                <p className="text-gray-400 text-xs mt-8">กรุณากดปุ่มเพื่อเริ่มกระบวนการคืนหนังสือ</p>
+                <p className="text-gray-400 text-base mt-8">กรุณากดปุ่มเพื่อเริ่มกระบวนการคืนหนังสือ</p>
               </div>
             )}
 
             {/* ขั้นตอนที่ 2: หน้าจอสำหรับการกรอกข้อมูลเพื่อระบุตัวตนผู้ใช้งาน */}
             {step === "identify" && (
-              <div className="text-center">
-                <div className="text-5xl mb-4">🪪</div>
-                <h2 className="text-2xl font-bold text-blue-900 mb-2">ระบุตัวตน</h2>
-                <p className="text-gray-400 text-sm mb-6">กรุณากรอกรหัส บัตรนักศึกษา หรือเบอร์โทร</p>
+              <div className="text-center flex-1 flex flex-col justify-center">
+                <div className="text-7xl mb-6">🪪</div>
+                <h2 className="text-4xl font-bold text-blue-900 mb-3">ระบุตัวตน</h2>
+                <p className="text-gray-400 text-xl mb-8">กรุณากรอกรหัส บัตรนักศึกษา หรือเบอร์โทร</p>
                 <input
                   type="text"
                   placeholder="รหัศนักศึกษา หรือ เบอร์โทร"
                   value={inputCode}
                   onChange={(e) => setInputCode(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleIdentify()}
-                  className="w-full border-2 border-blue-200 rounded-xl px-4 py-4 text-xl text-center tracking-widest mb-2 focus:outline-none focus:border-blue-500 text-gray-800"
+                  className="w-full border-2 border-blue-200 rounded-2xl px-6 py-6 text-3xl text-center tracking-widest mb-4 focus:outline-none focus:border-blue-500 text-gray-800"
                   autoFocus
                 />
-                {errorMsg && <p className="text-red-500 text-sm mb-3">{errorMsg}</p>}
+                {errorMsg && <p className="text-red-500 text-lg mb-4">{errorMsg}</p>}
                 <button onClick={handleIdentify} disabled={loading}
-                  className="w-full bg-blue-700 hover:bg-blue-800 disabled:bg-gray-300 text-white font-bold py-4 rounded-xl text-lg transition mt-2">
+                  className="w-full bg-blue-700 hover:bg-blue-800 disabled:bg-gray-300 text-white font-bold py-6 rounded-2xl text-2xl transition mt-4">
                   {loading ? "⏳ กำลังตรวจสอบ..." : "ยืนยัน →"}
                 </button>
-                <button onClick={handleReset} className="w-full mt-3 text-gray-400 hover:text-gray-600 text-sm py-2">← ย้อนกลับ</button>
+                <button onClick={handleReset} className="w-full mt-5 text-gray-400 hover:text-gray-600 text-lg py-3">← ย้อนกลับ</button>
               </div>
             )}
 
             {/* ขั้นตอนที่ 3: หน้าจอสำหรับการสแกนและตรวจสอบข้อมูลหนังสือ */}
             {step === "check-book" && (
-              <div className="text-center">
-                <div className="text-5xl mb-3">📖</div>
-                <h2 className="text-2xl font-bold text-blue-900 mb-1">ตรวจสอบหนังสือ</h2>
+              <div className="flex flex-col h-full">
+                <div className="text-center flex-none">
+                  <div className="text-6xl mb-2">📖</div>
+                  <h2 className="text-3xl font-bold text-blue-900 mb-1">ตรวจสอบหนังสือ</h2>
+                </div>
 
-                {/* ส่วนแสดงรายละเอียดข้อมูลของผู้ใช้งานที่กำลังทำรายการ */}
-                <div className="bg-blue-50 rounded-xl p-3 mb-4 border border-blue-100 text-left">
-                  <p className="text-blue-400 text-xs">ผู้คืนหนังสือ</p>
-                  <p className="text-blue-900 font-bold">{borrower?.name}</p>
-                  <p className="text-blue-500 text-sm">{borrower?.code}</p>
-                  {borrower?.phone && (
-                    <p className="text-blue-400 text-xs mt-2">📱 เบอร์โทร: <span className="font-semibold">{borrower.phone}</span></p>
+                <div className="flex-1 overflow-y-auto px-2 my-2 space-y-4">
+                  {/* ส่วนแสดงรายละเอียดข้อมูลของผู้ใช้งานที่กำลังทำรายการ */}
+                  <div className="bg-blue-50 rounded-2xl p-4 border border-blue-100 text-left">
+                    <p className="text-blue-400 text-lg">ผู้คืนหนังสือ</p>
+                    <p className="text-blue-900 text-3xl font-bold">{borrower?.name}</p>
+                    <p className="text-blue-500 text-xl">{borrower?.code}</p>
+                    {borrower?.phone && (
+                      <p className="text-blue-400 text-lg mt-1">📱 เบอร์โทร: <span className="font-semibold">{borrower.phone}</span></p>
+                    )}
+                  </div>
+
+                  {/* ส่วนแสดงรายการหนังสือที่ผู้ใช้งานรายนี้ยังคงค้างส่ง */}
+                  {activeBorrows.length > 0 && (
+                    <div className="bg-yellow-50 rounded-2xl p-4 border border-yellow-200 text-left">
+                      <p className="text-yellow-700 text-lg font-semibold mb-2">📋 หนังสือที่ยังยืมอยู่ ({activeBorrows.length} เล่ม)</p>
+                      <div className="max-h-32 overflow-y-auto pr-2">
+                        {activeBorrows.map((r, idx) => (
+                          <div key={r.NO || idx} className="text-xl text-gray-700 py-1 border-b border-yellow-100 last:border-0">
+                            <p className="font-medium">{r.TITLE}</p>
+                            <p className="text-gray-500 text-sm mt-1">กำหนดคืน: {r.DUEDATE}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {activeBorrows.length === 0 && (
+                    <div className="bg-gray-50 rounded-2xl p-4 border border-gray-200">
+                      <p className="text-gray-400 text-xl">ไม่พบรายการยืมหนังสือในระบบ</p>
+                    </div>
+                  )}
+
+                  {/* ส่วนแสดงรายการหนังสือที่สแกนเพื่อเตรียมคืน */}
+                  {booksToReturn.length > 0 && (
+                    <div className="bg-green-50 rounded-2xl p-4 border border-green-200 text-left">
+                      <p className="text-green-700 font-semibold text-lg mb-2">✅ หนังสือที่สแกนแล้ว ({booksToReturn.length} เล่ม)</p>
+                      <div className="max-h-48 overflow-y-auto pr-2">
+                        {booksToReturn.map(b => (
+                          <div key={b.id} className="text-xl text-gray-800 py-1 border-b border-green-100 flex justify-between items-center last:border-0">
+                            <span className="truncate pr-3">{b.title}</span>
+                            <button onClick={() => setBooksToReturn(booksToReturn.filter(x => x.id !== b.id))} className="text-red-500 font-bold hover:bg-red-100 px-4 py-2 rounded text-base">ลบ</button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                   )}
                 </div>
 
-                {/* ส่วนแสดงรายการหนังสือที่ผู้ใช้งานรายนี้ยังคงค้างส่ง */}
-                {activeBorrows.length > 0 && (
-                  <div className="bg-yellow-50 rounded-xl p-3 mb-4 border border-yellow-200 text-left">
-                    <p className="text-yellow-700 text-xs font-semibold mb-2">📋 หนังสือที่ยังยืมอยู่ ({activeBorrows.length} เล่ม)</p>
-                    {activeBorrows.map((r, idx) => (
-                      <div key={r.NO || idx} className="text-sm text-gray-700 py-1 border-b border-yellow-100 last:border-0">
-                        <p className="font-medium">{r.TITLE}</p>
-                        <p className="text-gray-400 text-xs">กำหนดคืน: {r.DUEDATE}</p>
-                      </div>
-                    ))}
+                <div className="text-center flex-none mt-auto">
+                  <p className="text-gray-500 text-base mb-2">กรอก Barcode ของหนังสือที่ต้องการคืน</p>
+                  <input
+                    type="text"
+                    placeholder="Barcode หรือ รหัสหนังสือ"
+                    value={inputBarcode}
+                    onChange={(e) => setInputBarcode(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleCheckBook()}
+                    className="w-full border-2 border-blue-200 rounded-2xl px-6 py-4 text-xl text-center tracking-widest mb-3 focus:outline-none focus:border-blue-500 text-gray-800"
+                    autoFocus
+                  />
+                  {errorMsg && <p className="text-red-500 text-base mb-3">{errorMsg}</p>}
+                  <div className="flex gap-3">
+                    <button onClick={handleCheckBook} disabled={loading || !inputBarcode.trim()}
+                      className="flex-1 bg-blue-100 hover:bg-blue-200 text-blue-700 font-bold py-4 rounded-2xl text-lg transition disabled:opacity-50">
+                      {loading ? "⏳..." : "+ สแกนเพิ่ม"}
+                    </button>
+                    <button onClick={() => setStep("drop")} disabled={booksToReturn.length === 0}
+                      className="flex-[2] bg-blue-700 hover:bg-blue-800 disabled:bg-gray-300 text-white font-bold py-4 rounded-2xl text-xl transition">
+                      ดำเนินการคืน ({booksToReturn.length} เล่ม) →
+                    </button>
                   </div>
-                )}
-
-                {activeBorrows.length === 0 && (
-                  <div className="bg-gray-50 rounded-xl p-3 mb-4 border border-gray-200">
-                    <p className="text-gray-400 text-sm">ไม่พบรายการยืมหนังสือในระบบ</p>
-                  </div>
-                )}
-
-                {/* ส่วนแสดงรายการหนังสือที่สแกนเพื่อเตรียมคืน */}
-                {booksToReturn.length > 0 && (
-                  <div className="bg-green-50 rounded-xl p-3 mb-4 border border-green-200 text-left">
-                    <p className="text-green-700 font-semibold text-sm mb-2">✅ หนังสือที่สแกนแล้ว ({booksToReturn.length} เล่ม)</p>
-                    {booksToReturn.map(b => (
-                      <div key={b.id} className="text-sm text-gray-800 py-1 border-b border-green-100 flex justify-between items-center last:border-0">
-                        <span className="truncate pr-2">{b.title}</span>
-                        <button onClick={() => setBooksToReturn(booksToReturn.filter(x => x.id !== b.id))} className="text-red-500 font-bold hover:bg-red-100 px-2 py-1 rounded text-xs">ลบ</button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                <p className="text-gray-500 text-sm mb-3">กรอก Barcode ของหนังสือที่ต้องการคืน</p>
-                <input
-                  type="text"
-                  placeholder="Barcode หรือ รหัสหนังสือ"
-                  value={inputBarcode}
-                  onChange={(e) => setInputBarcode(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleCheckBook()}
-                  className="w-full border-2 border-blue-200 rounded-xl px-4 py-4 text-lg text-center tracking-widest mb-2 focus:outline-none focus:border-blue-500 text-gray-800"
-                  autoFocus
-                />
-                {errorMsg && <p className="text-red-500 text-sm mb-3">{errorMsg}</p>}
-                <div className="flex gap-2">
-                  <button onClick={handleCheckBook} disabled={loading || !inputBarcode.trim()}
-                    className="flex-1 bg-blue-100 hover:bg-blue-200 text-blue-700 font-bold py-3 rounded-xl transition disabled:opacity-50">
-                    {loading ? "⏳..." : "+ สแกนเพิ่ม"}
-                  </button>
-                  <button onClick={() => setStep("drop")} disabled={booksToReturn.length === 0}
-                    className="flex-[2] bg-blue-700 hover:bg-blue-800 disabled:bg-gray-300 text-white font-bold py-3 rounded-xl text-lg transition">
-                    ดำเนินการคืน ({booksToReturn.length} เล่ม) →
-                  </button>
+                  <button onClick={handleReset} className="w-full mt-3 text-gray-400 hover:text-gray-600 text-base py-2">← ยกเลิกและกลับหน้าแรก</button>
                 </div>
-                <button onClick={handleReset} className="w-full mt-3 text-gray-400 hover:text-gray-600 text-sm py-2">← ยกเลิกและกลับหน้าแรก</button>
               </div>
             )}
 
             {/* ขั้นตอนที่ 4: หน้าจอแนะนำและยืนยันการคืนหนังสือเข้าตู้ */}
             {step === "drop" && (
-              <div className="text-center">
-                <div className="text-6xl mb-4 animate-bounce">📥</div>
-                <h2 className="text-2xl font-bold text-blue-900 mb-4">ดำเนินการคืนหนังสือเข้าตู้</h2>
-
-                {/* ส่วนแสดงรายละเอียดข้อมูลของหนังสือที่ได้รับการตรวจสอบแล้ว */}
-                <div className="max-h-48 overflow-y-auto mb-4">
-                  {booksToReturn.map(b => (
-                    <div key={b.id} className="bg-green-50 rounded-xl p-4 mb-2 border border-green-200 text-left">
-                      <p className="text-green-600 text-xs font-semibold mb-1">✅ เตรียมคืน</p>
-                      <p className="text-gray-800 font-bold">{b.title}</p>
-                      <p className="text-gray-500 text-sm">{b.author}</p>
-                      <p className="text-gray-400 text-xs mt-1">Barcode: {b.barcode}</p>
-                    </div>
-                  ))}
+              <div className="flex flex-col h-full">
+                <div className="text-center flex-none">
+                  <div className="text-8xl mb-6 animate-bounce">📥</div>
+                  <h2 className="text-4xl font-bold text-blue-900 mb-6">ดำเนินการคืนหนังสือเข้าตู้</h2>
                 </div>
 
-                {/* ส่วนแสดงรายการหนังสือเล่มอื่น ๆ ที่ผู้ใช้งานรายนี้ยังคงค้างส่ง */}
-                {activeBorrows.length > 0 && (
-                  <div className="bg-yellow-50 rounded-xl p-4 mb-4 border border-yellow-200 text-left">
-                    <p className="text-yellow-700 text-xs font-semibold mb-2">📚 หนังสือที่ยังไม่คืน ({activeBorrows.length} เล่ม)</p>
-                    <div className="space-y-2 max-h-40 overflow-y-auto">
-                      {activeBorrows.map((r, idx) => (
-                        <div key={r.NO || idx} className="text-sm text-gray-700 pb-2 border-b border-yellow-100 last:border-0">
-                          <p className="font-medium">{r.TITLE}</p>
-                          <p className="text-gray-500 text-xs">กำหนดคืน: {r.DUEDATE}</p>
+                <div className="flex-1 overflow-y-auto px-2 my-2 space-y-6">
+                  {/* ส่วนแสดงรายละเอียดข้อมูลของหนังสือที่ได้รับการตรวจสอบแล้ว */}
+                  <div className="bg-green-50 rounded-2xl p-5 border border-green-200 text-left">
+                    <p className="text-green-600 text-base font-semibold mb-3">✅ เตรียมคืน ({booksToReturn.length} เล่ม)</p>
+                    <div className="max-h-48 overflow-y-auto pr-2">
+                      {booksToReturn.map(b => (
+                        <div key={b.id} className="border-b border-green-100 last:border-0 py-2">
+                          <p className="text-gray-800 text-xl font-bold">{b.title}</p>
+                          <p className="text-gray-500 text-lg">{b.author}</p>
+                          <p className="text-gray-400 text-sm mt-1">Barcode: {b.barcode}</p>
                         </div>
                       ))}
                     </div>
                   </div>
-                )}
 
-                <div className="bg-yellow-50 rounded-xl p-3 mb-5 border border-yellow-200">
-                  <p className="text-yellow-700 text-sm font-medium">🔓 ตู้เปิดอยู่ — กรุณากดยืนยันเพื่อคืนหนังสือ</p>
+                  {/* ส่วนแสดงรายการหนังสือเล่มอื่น ๆ ที่ผู้ใช้งานรายนี้ยังคงค้างส่ง */}
+                  {activeBorrows.length > 0 && (
+                    <div className="bg-yellow-50 rounded-2xl p-5 border border-yellow-200 text-left">
+                      <p className="text-yellow-700 text-base font-semibold mb-3">📚 หนังสือที่ยังไม่คืน ({activeBorrows.length} เล่ม)</p>
+                      <div className="space-y-3 max-h-48 overflow-y-auto pr-2">
+                        {activeBorrows.map((r, idx) => (
+                          <div key={r.NO || idx} className="text-lg text-gray-700 pb-3 border-b border-yellow-100 last:border-0">
+                            <p className="font-medium">{r.TITLE}</p>
+                            <p className="text-gray-500 text-sm mt-1">กำหนดคืน: {r.DUEDATE}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
-                {errorMsg && <p className="text-red-500 text-sm mb-3">{errorMsg}</p>}
-                <button onClick={handleDropBook} disabled={loading}
-                  className="w-full bg-green-600 hover:bg-green-700 disabled:bg-gray-300 text-white font-bold py-5 rounded-xl text-xl transition shadow-lg active:scale-95">
-                  {loading ? "⏳ กำลังบันทึก..." : "✅ ดำเนินการคืนหนังสือ"}
-                </button>
-                <button onClick={() => setStep("check-book")} className="w-full mt-4 text-gray-400 hover:text-gray-600 text-sm py-2">← ยกเลิก</button>
+                <div className="text-center flex-none mt-auto">
+                  <div className="bg-yellow-50 rounded-2xl p-4 mb-6 border border-yellow-200">
+                    <p className="text-yellow-700 text-lg font-medium">🔓 ตู้เปิดอยู่ — กรุณากดยืนยันเพื่อคืนหนังสือ</p>
+                  </div>
+
+                  {errorMsg && <p className="text-red-500 text-lg mb-4">{errorMsg}</p>}
+                  <button onClick={handleDropBook} disabled={loading}
+                    className="w-full bg-green-600 hover:bg-green-700 disabled:bg-gray-300 text-white font-bold py-6 rounded-2xl text-3xl transition shadow-lg active:scale-95">
+                    {loading ? "⏳ กำลังบันทึก..." : "✅ ดำเนินการคืนหนังสือ"}
+                  </button>
+                  <button onClick={() => setStep("check-book")} className="w-full mt-6 text-gray-400 hover:text-gray-600 text-lg py-3">← ยกเลิก</button>
+                </div>
               </div>
             )}
 
             {/* ขั้นตอนที่ 5: หน้าจอแสดงผลลัพธ์การทำรายการคืนหนังสือสำเร็จ */}
             {step === "success" && (
-              <div className="text-center">
-                <div className="text-7xl mb-4">🎉</div>
-                <h2 className="text-2xl font-bold text-green-700 mb-2">
-                  คืนหนังสือสำเร็จ!
-                </h2>
-                <p className="text-gray-500 mb-4">บันทึกลงฐานข้อมูลเรียบร้อยแล้ว</p>
-                <div className="bg-green-50 border border-green-200 rounded-xl p-4 mb-6 text-left max-h-40 overflow-y-auto">
-                  <p className="text-green-600 text-xs font-semibold mb-2">✅ รายละเอียดการคืน</p>
-                  <p className="text-gray-700"><span className="text-gray-400 text-sm">ผู้คืน: </span>{borrower?.name}</p>
-                  <p className="text-gray-700"><span className="text-gray-400 text-sm">จำนวน: </span>{booksToReturn.length} เล่ม</p>
-                  <div className="pl-4 border-l-2 border-green-200 my-2">
-                    {booksToReturn.map((b, i) => <p key={i} className="text-gray-700 text-sm truncate">{b.title}</p>)}
+              <div className="text-center flex flex-col justify-center h-full">
+                <div className="flex-none">
+                  <div className="text-8xl mb-6">🎉</div>
+                  <h2 className="text-4xl font-bold text-green-700 mb-3">
+                    คืนหนังสือสำเร็จ!
+                  </h2>
+                  <p className="text-gray-500 text-xl mb-6">บันทึกลงฐานข้อมูลเรียบร้อยแล้ว</p>
+                </div>
+
+                <div className="flex-1 overflow-y-auto px-2 space-y-6">
+                  <div className="bg-green-50 border border-green-200 rounded-2xl p-5 text-left">
+                    <p className="text-green-600 text-base font-semibold mb-3">✅ รายละเอียดการคืน</p>
+                    <p className="text-gray-700 text-lg"><span className="text-gray-400">ผู้คืน: </span>{borrower?.name}</p>
+                    <p className="text-gray-700 text-lg"><span className="text-gray-400">จำนวน: </span>{booksToReturn.length} เล่ม</p>
+                    <div className="pl-5 border-l-4 border-green-200 my-3 max-h-32 overflow-y-auto pr-2">
+                      {booksToReturn.map((b, i) => <p key={i} className="text-gray-700 text-lg truncate">{b.title}</p>)}
+                    </div>
+                    <p className="text-gray-700 text-lg"><span className="text-gray-400">เวลา: </span>{new Date().toLocaleString("th-TH")}</p>
                   </div>
-                  <p className="text-gray-700"><span className="text-gray-400 text-sm">เวลา: </span>{new Date().toLocaleString("th-TH")}</p>
+
+                  <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 text-center">
+                    <p className="text-blue-700 text-base font-semibold">🔒 สถานะตู้: ปิดอยู่</p>
+                    <p className="text-blue-500 text-sm mt-1">รอการเลือกของผู้ใช้</p>
+                  </div>
                 </div>
 
-                <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 mb-6 text-center">
-                  <p className="text-blue-700 text-xs font-semibold">🔒 สถานะตู้: ปิดอยู่</p>
-                  <p className="text-blue-500 text-xs">รอการเลือกของผู้ใช้</p>
-                </div>
-
-                <div className="flex flex-col gap-3">
+                <div className="flex flex-col gap-4 flex-none mt-6">
                   {/* ปุ่มคำสั่งสำหรับการดำเนินการคืนหนังสือเล่มถัดไป ด้วยข้อมูลผู้ใช้งานเดิม */}
                   <button
                     onClick={() => {
@@ -608,7 +631,7 @@ export default function TabletPage() {
                       setErrorMsg("");
                       setStep("check-book"); // ข้ามขั้นตอนไปสู่หน้าการตรวจสอบรหัสหนังสือ
                     }}
-                    className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-4 rounded-xl text-lg transition active:scale-95"
+                    className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-6 rounded-2xl text-2xl transition active:scale-95"
                   >
                     📚 คืนเล่มถัดไป
                   </button>
@@ -616,7 +639,7 @@ export default function TabletPage() {
                   {/* ปุ่มคำสั่งสำหรับการยุติการทำรายการและกลับสู่หน้าจอเริ่มต้น */}
                   <button
                     onClick={handleReset}
-                    className="w-full bg-blue-700 hover:bg-blue-800 text-white font-bold py-4 rounded-xl text-lg transition active:scale-95"
+                    className="w-full bg-blue-700 hover:bg-blue-800 text-white font-bold py-6 rounded-2xl text-2xl transition active:scale-95"
                   >
                     ✅ เสร็จสิ้น
                   </button>
@@ -627,7 +650,7 @@ export default function TabletPage() {
           </div>
         </div>
 
-        <div className="relative z-10 text-center py-3 text-white text-xs bg-blue-950 border-t border-blue-800">
+        <div className="relative z-10 text-center py-6 text-white text-xl bg-blue-950 border-t border-blue-800">
             หากพบปัญหา กรุณาติดต่อบรรณารักษ์ที่เคาน์เตอร์
           </div>
       </div>
