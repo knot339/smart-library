@@ -34,8 +34,9 @@ func Setup(app *fiber.App) {
 
 	// เส้นทาง API สำหรับการสืบค้นข้อมูล
 	app.Get("/api/borrower/code/:code", handlers.FindBorrowerByCode)
-	app.Get("/api/book/isbn/:isbn", handlers.FindBookByISBN)
-	app.Get("/api/borrows/active/:borrower_id", handlers.GetActiveBorrows)
+	app.Get("/api/book/barcode/:barcode", handlers.FindBookByBarcode)
+	app.Get("/api/patron/:barcode/borrows", handlers.GetPatronBorrow)
+	app.Get("/api/bibinfo/:bibid", handlers.GetBibInfo)
 	app.Post("/api/borrows/return", handlers.ReturnByBorrowerAndBook)
 
 	// เส้นทาง API สำหรับจัดการข้อมูลหนังสือ (CRUD)

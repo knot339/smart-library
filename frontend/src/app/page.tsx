@@ -8,10 +8,10 @@ import { API_BASE_URL as API, WS_BASE_URL } from "../lib/config";
 export default function TabletPage() {
   const [step, setStep] = useState<Step>("select-user");
   const [inputCode, setInputCode] = useState("");
-  const [inputISBN, setInputISBN] = useState("");
+  const [inputBarcode, setInputBarcode] = useState("");
   const [borrower, setBorrower] = useState<Borrower | null>(null);
-  const [book, setBook] = useState<Book | null>(null);
-  const [activeBorrows, setActiveBorrows] = useState<BorrowRecord[]>([]);
+  const [booksToReturn, setBooksToReturn] = useState<Book[]>([]);
+  const [activeBorrows, setActiveBorrows] = useState<any[]>([]);
   const [capacity, setCapacity] = useState(0);
   const [isFull, setIsFull] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -68,10 +68,10 @@ export default function TabletPage() {
 
       if (msg.type === "rfid") {
         // จัดการเมื่อได้รับข้อมูลประเภท RFID เพื่อตรวจสอบข้อมูลของหนังสือ
-        setInputISBN(msg.value);
+        setInputBarcode(msg.value);
         setStep((prev) => {
           if (prev === "check-book") {
-            setTimeout(() => handleCheckBookWithISBN(msg.value), 100);
+            setTimeout(() => handleCheckBookWithBarcode(msg.value), 100);
           }
           return prev;
         });
@@ -148,7 +148,7 @@ export default function TabletPage() {
       setBorrower(data);
 
       // ดึงข้อมูลรายการหนังสือที่ผู้ใช้งานรายดังกล่าวยังคงทำการยืมอยู่
-      const borrowRes = await fetch(`${API}/borrows/active/${data.id}`);
+      const borrowRes = await fetch(`${API}/patron/${data.code}/borrows`);
       const borrowData = await borrowRes.json();
       setActiveBorrows(borrowData);
 
@@ -159,24 +159,29 @@ export default function TabletPage() {
     setLoading(false);
   };
 
-  // ขั้นตอนที่ 2: ตรวจสอบข้อมูลรายละเอียดของหนังสือโดยใช้รหัส ISBN
+  // ขั้นตอนที่ 2: ตรวจสอบข้อมูลรายละเอียดของหนังสือโดยใช้รหัส Barcode
   const handleCheckBook = async () => {
-    if (!inputISBN.trim()) {
+    if (!inputBarcode.trim()) {
       setErrorMsg("กรณาวางหนังสือบนช่องรับ");
       return;
     }
     setLoading(true);
     setErrorMsg("");
     try {
-      const res = await fetch(`${API}/book/isbn/${inputISBN.trim()}`);
+      const res = await fetch(`${API}/book/barcode/${inputBarcode.trim()}`);
       const data = await res.json();
       if (!res.ok) {
         setErrorMsg(data.error || "ไม่พบหนังสือในระบบ");
         setLoading(false);
         return;
       }
-      setBook(data);
-      setStep("drop");
+      if (booksToReturn.some(b => b.id === data.id)) {
+        setErrorMsg("สแกนหนังสือเล่มนี้ไปแล้ว");
+        setLoading(false);
+        return;
+      }
+      setBooksToReturn(prev => [...prev, data]);
+      setInputBarcode(""); // เคลียร์ช่องให้พร้อมสแกนเล่มถัดไป
     } catch {
       setErrorMsg("เกิดข้อผิดพลาด กรุณาลองใหม่");
     }
@@ -185,25 +190,27 @@ export default function TabletPage() {
 
   // ขั้นตอนที่ 3: ดำเนินการคืนหนังสือเข้าตู้ พร้อมบันทึกข้อมูลการคืนลงในฐานข้อมูล
   const handleDropBook = async () => {
-    if (!borrower || !book) return;
+    if (!borrower || booksToReturn.length === 0) return;
     setLoading(true);
     setErrorMsg("");
     try {
-      // บันทึกข้อมูลการคืนหนังสือลงในระบบฐานข้อมูล
-      const res = await fetch(`${API}/borrows/return`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          book_id: book.id,
-          borrower_id: borrower?.id,
-          returned_by_phone: borrower?.phone || ""
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setErrorMsg(data.error || "เกิดข้อผิดพลาด");
-        setLoading(false);
-        return;
+      // วนลูปบันทึกข้อมูลการคืนหนังสือทุกลงในระบบฐานข้อมูล
+      for (const b of booksToReturn) {
+        const res = await fetch(`${API}/borrows/return`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            book_id: b.id,
+            borrower_id: borrower?.id,
+            returned_by_phone: borrower?.phone || ""
+          }),
+        });
+        if (!res.ok) {
+          const data = await res.json();
+          setErrorMsg(data.error || `เกิดข้อผิดพลาดในการคืนหนังสือ ${b.title}`);
+          setLoading(false);
+          return;
+        }
       }
 
       // ส่งสัญญาณไปยังระบบฮาร์ดแวร์เพื่อดำเนินการคำนวณและอัปเดตความจุของตู้รับคืน
@@ -233,9 +240,9 @@ export default function TabletPage() {
     motorOpenedRef.current = false;
     setStep("select-user");
     setInputCode("");
-    setInputISBN("");
+    setInputBarcode("");
     setBorrower(null);
-    setBook(null);
+    setBooksToReturn([]);
     setActiveBorrows([]);
     setErrorMsg("");
     setMotorOpen(false);
@@ -251,23 +258,28 @@ export default function TabletPage() {
       const data = await res.json();
       if (!res.ok) { setErrorMsg("ไม่พบข้อมูล กรุณาใส่เลขโทรศัพท์"); setLoading(false); return; }
       setBorrower(data);
-      const borrowRes = await fetch(`${API}/borrows/active/${data.id}`);
+      const borrowRes = await fetch(`${API}/patron/${data.code}/borrows`);
       setActiveBorrows(await borrowRes.json());
       setStep("check-book");
     } catch { setErrorMsg("เกิดข้อผิดพลาด"); }
     setLoading(false);
   };
 
-  const handleCheckBookWithISBN = async (isbn: string) => {
-    if (!isbn.trim()) return;
+  const handleCheckBookWithBarcode = async (barcode: string) => {
+    if (!barcode.trim()) return;
     setLoading(true);
     setErrorMsg("");
     try {
-      const res = await fetch(`${API}/book/isbn/${isbn.trim()}`);
+      const res = await fetch(`${API}/book/barcode/${barcode.trim()}`);
       const data = await res.json();
       if (!res.ok) { setErrorMsg(data.error); setLoading(false); return; }
-      setBook(data);
-      setStep("drop");
+      if (booksToReturn.some(b => b.id === data.id)) {
+        setErrorMsg("สแกนหนังสือเล่มนี้ไปแล้ว");
+        setLoading(false);
+        return;
+      }
+      setBooksToReturn(prev => [...prev, data]);
+      setInputBarcode("");
     } catch { setErrorMsg("เกิดข้อผิดพลาด"); }
     setLoading(false);
   };
@@ -465,10 +477,10 @@ export default function TabletPage() {
                 {activeBorrows.length > 0 && (
                   <div className="bg-yellow-50 rounded-xl p-3 mb-4 border border-yellow-200 text-left">
                     <p className="text-yellow-700 text-xs font-semibold mb-2">📋 หนังสือที่ยังยืมอยู่ ({activeBorrows.length} เล่ม)</p>
-                    {activeBorrows.map((r) => (
-                      <div key={r.id} className="text-sm text-gray-700 py-1 border-b border-yellow-100 last:border-0">
-                        <p className="font-medium">{r.book?.title}</p>
-                        <p className="text-gray-400 text-xs">กำหนดคืน: {new Date(r.due_date).toLocaleDateString("th-TH")}</p>
+                    {activeBorrows.map((r, idx) => (
+                      <div key={r.NO || idx} className="text-sm text-gray-700 py-1 border-b border-yellow-100 last:border-0">
+                        <p className="font-medium">{r.TITLE}</p>
+                        <p className="text-gray-400 text-xs">กำหนดคืน: {r.DUEDATE}</p>
                       </div>
                     ))}
                   </div>
@@ -480,22 +492,41 @@ export default function TabletPage() {
                   </div>
                 )}
 
-                <p className="text-gray-500 text-sm mb-3">กรอก ISBN ของหนังสือที่ต้องการคืน</p>
+                {/* ส่วนแสดงรายการหนังสือที่สแกนเพื่อเตรียมคืน */}
+                {booksToReturn.length > 0 && (
+                  <div className="bg-green-50 rounded-xl p-3 mb-4 border border-green-200 text-left">
+                    <p className="text-green-700 font-semibold text-sm mb-2">✅ หนังสือที่สแกนแล้ว ({booksToReturn.length} เล่ม)</p>
+                    {booksToReturn.map(b => (
+                      <div key={b.id} className="text-sm text-gray-800 py-1 border-b border-green-100 flex justify-between items-center last:border-0">
+                        <span className="truncate pr-2">{b.title}</span>
+                        <button onClick={() => setBooksToReturn(booksToReturn.filter(x => x.id !== b.id))} className="text-red-500 font-bold hover:bg-red-100 px-2 py-1 rounded text-xs">ลบ</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <p className="text-gray-500 text-sm mb-3">กรอก Barcode ของหนังสือที่ต้องการคืน</p>
                 <input
                   type="text"
-                  placeholder="ISBN เช่น 978-XXXXXXXXXX"
-                  value={inputISBN}
-                  onChange={(e) => setInputISBN(e.target.value)}
+                  placeholder="Barcode หรือ รหัสหนังสือ"
+                  value={inputBarcode}
+                  onChange={(e) => setInputBarcode(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleCheckBook()}
                   className="w-full border-2 border-blue-200 rounded-xl px-4 py-4 text-lg text-center tracking-widest mb-2 focus:outline-none focus:border-blue-500 text-gray-800"
                   autoFocus
                 />
                 {errorMsg && <p className="text-red-500 text-sm mb-3">{errorMsg}</p>}
-                <button onClick={handleCheckBook} disabled={loading}
-                  className="w-full bg-blue-700 hover:bg-blue-800 disabled:bg-gray-300 text-white font-bold py-4 rounded-xl text-lg transition">
-                  {loading ? "⏳ กำลังตรวจสอบ..." : "ตรวจสอบหนังสือ →"}
-                </button>
-                <button onClick={handleReset} className="w-full mt-3 text-gray-400 hover:text-gray-600 text-sm py-2">← ยกเลิก</button>
+                <div className="flex gap-2">
+                  <button onClick={handleCheckBook} disabled={loading || !inputBarcode.trim()}
+                    className="flex-1 bg-blue-100 hover:bg-blue-200 text-blue-700 font-bold py-3 rounded-xl transition disabled:opacity-50">
+                    {loading ? "⏳..." : "+ สแกนเพิ่ม"}
+                  </button>
+                  <button onClick={() => setStep("drop")} disabled={booksToReturn.length === 0}
+                    className="flex-[2] bg-blue-700 hover:bg-blue-800 disabled:bg-gray-300 text-white font-bold py-3 rounded-xl text-lg transition">
+                    ดำเนินการคืน ({booksToReturn.length} เล่ม) →
+                  </button>
+                </div>
+                <button onClick={handleReset} className="w-full mt-3 text-gray-400 hover:text-gray-600 text-sm py-2">← ยกเลิกและกลับหน้าแรก</button>
               </div>
             )}
 
@@ -506,11 +537,15 @@ export default function TabletPage() {
                 <h2 className="text-2xl font-bold text-blue-900 mb-4">ดำเนินการคืนหนังสือเข้าตู้</h2>
 
                 {/* ส่วนแสดงรายละเอียดข้อมูลของหนังสือที่ได้รับการตรวจสอบแล้ว */}
-                <div className="bg-green-50 rounded-xl p-4 mb-4 border border-green-200 text-left">
-                  <p className="text-green-600 text-xs font-semibold mb-1">✅ คืนหนังสือ</p>
-                  <p className="text-gray-800 font-bold">{book?.title}</p>
-                  <p className="text-gray-500 text-sm">{book?.author}</p>
-                  <p className="text-gray-400 text-xs mt-1">ISBN: {book?.isbn}</p>
+                <div className="max-h-48 overflow-y-auto mb-4">
+                  {booksToReturn.map(b => (
+                    <div key={b.id} className="bg-green-50 rounded-xl p-4 mb-2 border border-green-200 text-left">
+                      <p className="text-green-600 text-xs font-semibold mb-1">✅ เตรียมคืน</p>
+                      <p className="text-gray-800 font-bold">{b.title}</p>
+                      <p className="text-gray-500 text-sm">{b.author}</p>
+                      <p className="text-gray-400 text-xs mt-1">Barcode: {b.barcode}</p>
+                    </div>
+                  ))}
                 </div>
 
                 {/* ส่วนแสดงรายการหนังสือเล่มอื่น ๆ ที่ผู้ใช้งานรายนี้ยังคงค้างส่ง */}
@@ -518,10 +553,10 @@ export default function TabletPage() {
                   <div className="bg-yellow-50 rounded-xl p-4 mb-4 border border-yellow-200 text-left">
                     <p className="text-yellow-700 text-xs font-semibold mb-2">📚 หนังสือที่ยังไม่คืน ({activeBorrows.length} เล่ม)</p>
                     <div className="space-y-2 max-h-40 overflow-y-auto">
-                      {activeBorrows.map((r) => (
-                        <div key={r.id} className="text-sm text-gray-700 pb-2 border-b border-yellow-100 last:border-0">
-                          <p className="font-medium">{r.book?.title}</p>
-                          <p className="text-gray-500 text-xs">กำหนดคืน: {new Date(r.due_date).toLocaleDateString("th-TH")}</p>
+                      {activeBorrows.map((r, idx) => (
+                        <div key={r.NO || idx} className="text-sm text-gray-700 pb-2 border-b border-yellow-100 last:border-0">
+                          <p className="font-medium">{r.TITLE}</p>
+                          <p className="text-gray-500 text-xs">กำหนดคืน: {r.DUEDATE}</p>
                         </div>
                       ))}
                     </div>
@@ -537,7 +572,7 @@ export default function TabletPage() {
                   className="w-full bg-green-600 hover:bg-green-700 disabled:bg-gray-300 text-white font-bold py-5 rounded-xl text-xl transition shadow-lg active:scale-95">
                   {loading ? "⏳ กำลังบันทึก..." : "✅ ดำเนินการคืนหนังสือ"}
                 </button>
-                <button onClick={handleReset} className="w-full mt-4 text-gray-400 hover:text-gray-600 text-sm py-2">← ยกเลิก</button>
+                <button onClick={() => setStep("check-book")} className="w-full mt-4 text-gray-400 hover:text-gray-600 text-sm py-2">← ยกเลิก</button>
               </div>
             )}
 
@@ -549,10 +584,13 @@ export default function TabletPage() {
                   คืนหนังสือสำเร็จ!
                 </h2>
                 <p className="text-gray-500 mb-4">บันทึกลงฐานข้อมูลเรียบร้อยแล้ว</p>
-                <div className="bg-green-50 border border-green-200 rounded-xl p-4 mb-6 text-left">
+                <div className="bg-green-50 border border-green-200 rounded-xl p-4 mb-6 text-left max-h-40 overflow-y-auto">
                   <p className="text-green-600 text-xs font-semibold mb-2">✅ รายละเอียดการคืน</p>
                   <p className="text-gray-700"><span className="text-gray-400 text-sm">ผู้คืน: </span>{borrower?.name}</p>
-                  <p className="text-gray-700"><span className="text-gray-400 text-sm">หนังสือ: </span>{book?.title}</p>
+                  <p className="text-gray-700"><span className="text-gray-400 text-sm">จำนวน: </span>{booksToReturn.length} เล่ม</p>
+                  <div className="pl-4 border-l-2 border-green-200 my-2">
+                    {booksToReturn.map((b, i) => <p key={i} className="text-gray-700 text-sm truncate">{b.title}</p>)}
+                  </div>
                   <p className="text-gray-700"><span className="text-gray-400 text-sm">เวลา: </span>{new Date().toLocaleString("th-TH")}</p>
                 </div>
 
@@ -565,8 +603,8 @@ export default function TabletPage() {
                   {/* ปุ่มคำสั่งสำหรับการดำเนินการคืนหนังสือเล่มถัดไป ด้วยข้อมูลผู้ใช้งานเดิม */}
                   <button
                     onClick={() => {
-                      setBook(null);
-                      setInputISBN("");
+                      setBooksToReturn([]);
+                      setInputBarcode("");
                       setErrorMsg("");
                       setStep("check-book"); // ข้ามขั้นตอนไปสู่หน้าการตรวจสอบรหัสหนังสือ
                     }}

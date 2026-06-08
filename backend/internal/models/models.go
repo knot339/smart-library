@@ -9,6 +9,10 @@ type Book struct {
 	Title     string    `gorm:"size:200" json:"title"`
 	Author    string    `gorm:"size:100" json:"author"`
 	Category  string    `gorm:"size:50" json:"category"`
+	Barcode   string    `gorm:"uniqueIndex;size:50" json:"barcode"`
+	BibID     string    `gorm:"size:50" json:"bibid"`
+	CallNo    string    `gorm:"size:100" json:"callno"`
+	MatTypeID int       `gorm:"default:1" json:"mattypeid"`
 	Stock     int       `gorm:"default:1" json:"stock"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -32,6 +36,7 @@ type BorrowRecord struct {
 	Borrower        Borrower   `gorm:"foreignKey:BorrowerID" json:"borrower"`
 	BookID          uint       `json:"book_id"`
 	Book            Book       `gorm:"foreignKey:BookID" json:"book"`
+	Renew           int        `gorm:"default:0" json:"renew"`
 	BorrowedAt      time.Time  `json:"borrowed_at"`
 	DueDate         time.Time  `json:"due_date"`
 	ReturnedAt      *time.Time `json:"returned_at"` // วันและเวลาที่ดำเนินการคืน (nil หมายถึงยังไม่ส่งคืน)

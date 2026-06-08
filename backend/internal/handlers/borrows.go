@@ -18,24 +18,63 @@ func FindBorrowerByCode(c *fiber.Ctx) error {
 	return c.JSON(borrower)
 }
 
-// ค้นหาข้อมูลหนังสือจากรหัส ISBN
-func FindBookByISBN(c *fiber.Ctx) error {
-	isbn := c.Params("isbn")
+// ค้นหาข้อมูลหนังสือจากรหัส Barcode
+func FindBookByBarcode(c *fiber.Ctx) error {
+	barcode := c.Params("barcode")
 	var book models.Book
-	if err := database.DB.Where("isbn = ?", isbn).First(&book).Error; err != nil {
+	if err := database.DB.Where("barcode = ?", barcode).First(&book).Error; err != nil {
 		return c.Status(404).JSON(fiber.Map{"error": "ไม่พบหนังสือในระบบ"})
 	}
 	return c.JSON(book)
 }
 
-// ค้นหารายการหนังสือที่ผู้ยืมยังไม่ได้ดำเนินการส่งคืน
-func GetActiveBorrows(c *fiber.Ctx) error {
-	borrowerID := c.Params("borrower_id")
+// GetBibInfo API จำลองการดึงข้อมูลบรรณานุกรม
+func GetBibInfo(c *fiber.Ctx) error {
+	bibid := c.Params("bibid")
+	var book models.Book
+	if err := database.DB.Where("bib_id = ?", bibid).First(&book).Error; err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "ไม่พบข้อมูลบรรณานุกรม"})
+	}
+
+	return c.JSON(fiber.Map{
+		"BibInfo": []fiber.Map{
+			{"FIELD": "ISBN", "DATA": book.ISBN},
+			{"FIELD": "Author", "DATA": book.Author},
+			{"FIELD": "Title", "DATA": book.Title},
+			{"FIELD": "CallNo", "DATA": book.CallNo},
+		},
+	})
+}
+
+// ค้นหารายการหนังสือที่ผู้ยืมยังไม่ได้ดำเนินการส่งคืน (แบบ API จริง)
+func GetPatronBorrow(c *fiber.Ctx) error {
+	barcode := c.Params("barcode") // USERBARCODE
+	var borrower models.Borrower
+	if err := database.DB.Where("code = ?", barcode).First(&borrower).Error; err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "ไม่พบข้อมูลสมาชิก"})
+	}
+
 	var records []models.BorrowRecord
-	database.DB.Preload("Book").Preload("Borrower").
-		Where("borrower_id = ? AND status = ?", borrowerID, "borrowed").
+	database.DB.Preload("Book").
+		Where("borrower_id = ? AND status = ?", borrower.ID, "borrowed").
 		Find(&records)
-	return c.JSON(records)
+
+	result := make([]fiber.Map, len(records))
+	for i, r := range records {
+		result[i] = fiber.Map{
+			"NO":           float64(20000 + i),
+			"BARCODE":      r.Book.Barcode,
+			"BIBID":        r.Book.BibID,
+			"TITLE":        r.Book.Title,
+			"MATTYPEID":    r.Book.MatTypeID,
+			"AUTHOR":       r.Book.Author,
+			"CALLNO":       r.Book.CallNo,
+			"RENEW":        r.Renew,
+			"CHECKOUTDATE": r.BorrowedAt.Format("02/01/2006"), // DD/MM/YYYY
+			"DUEDATE":      r.DueDate.Format("02/01/2006"),
+		}
+	}
+	return c.JSON(result)
 }
 
 // บันทึกการทำรายการคืนหนังสือเข้าสู่ระบบ (อ้างอิงจากรหัสหนังสือ)

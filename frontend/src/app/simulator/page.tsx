@@ -172,11 +172,11 @@ export default function SimulatorPage() {
         {/* ส่วนการจำลองการทำงานของเครื่องอ่าน RFID (RFID Reader) */}
         <div className="bg-gray-800 rounded-lg p-4 mb-4">
           <h2 className="font-semibold mb-1">📡 จำลอง RFID Reader</h2>
-          <p className="text-gray-400 text-xs mb-3">ส่ง ISBN หนังสือ ไปยังหน้า Tablet (แทนการสแกน RFID)</p>
+          <p className="text-gray-400 text-xs mb-3">ส่ง Barcode/RFID หนังสือ ไปยังหน้า Tablet (แทนการสแกน RFID)</p>
           <div className="flex gap-2">
             <input
               type="text"
-              placeholder="ISBN เช่น 978-XXXXXXXXXX"
+              placeholder="Barcode หรือ รหัสหนังสือ"
               value={rfidInput}
               onChange={(e) => setRfidInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && sendToTablet("rfid", rfidInput)}

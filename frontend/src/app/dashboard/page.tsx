@@ -5,11 +5,11 @@ import { API_BASE_URL as API } from "../../lib/config";
 type MotorStatus = "closed" | "open" | "dump";
 type BookInCabinet = {
     id: number; title: string; author: string;
-    isbn: string; returned_at: string; returned_by: string; returned_by_phone?: string;
+    isbn: string; barcode: string; returned_at: string; returned_by: string; returned_by_phone?: string;
 };
 type ReturnRecord = {
     id: number; returned_at: string; returned_by_phone: string;
-    book: { title: string; isbn: string };
+    book: { title: string; isbn: string; barcode: string };
     borrower: { name: string; code: string; phone?: string };
 };
 
@@ -295,7 +295,7 @@ export default function DashboardPage() {
                             ? <div className="text-center py-12 text-gray-400"><p className="text-4xl mb-2">📭</p><p>ไม่มีหนังสือในตู้ขณะนี้</p></div>
                             : <table className="w-full text-sm">
                                 <thead className="bg-blue-50 text-blue-900">
-                                    <tr>{["ชื่อหนังสือ", "ผู้แต่ง", "ISBN", "คืนเมื่อ", "คืนโดย"].map(h => (
+                                    <tr>{["ชื่อหนังสือ", "ผู้แต่ง", "Barcode / ISBN", "คืนเมื่อ", "คืนโดย"].map(h => (
                                         <th key={h} className="px-4 py-3 text-left font-semibold">{h}</th>
                                     ))}</tr>
                                 </thead>
@@ -304,7 +304,7 @@ export default function DashboardPage() {
                                         <tr key={b.id} className={i % 2 === 0 ? "bg-white" : "bg-gray-50"}>
                                             <td className="px-4 py-3 font-medium text-gray-800">{b.title}</td>
                                             <td className="px-4 py-3 text-gray-600">{b.author}</td>
-                                            <td className="px-4 py-3 font-mono text-gray-400 text-xs">{b.isbn}</td>
+                                            <td className="px-4 py-3 font-mono text-gray-400 text-xs">{b.barcode}<br/>{b.isbn}</td>
                                             <td className="px-4 py-3 text-gray-500">{fmtDate(b.returned_at)}</td>
                                             <td className="px-4 py-3 text-gray-600 font-mono">{b.returned_by_phone || b.returned_by}</td>
                                         </tr>
@@ -319,7 +319,7 @@ export default function DashboardPage() {
                             ? <div className="text-center py-12 text-gray-400"><p className="text-4xl mb-2">📋</p><p>ยังไม่มีประวัติการคืน</p></div>
                             : <table className="w-full text-sm">
                                 <thead className="bg-blue-50 text-blue-900">
-                                    <tr>{["ชื่อหนังสือ", "ISBN", "ผู้ยืม", "รหัส", "เบอร์โทรผู้คืน", "วันที่คืน"].map(h => (
+                                    <tr>{["ชื่อหนังสือ", "Barcode / ISBN", "ผู้ยืม", "รหัส", "เบอร์โทรผู้คืน", "วันที่คืน"].map(h => (
                                         <th key={h} className="px-4 py-3 text-left font-semibold">{h}</th>
                                     ))}</tr>
                                 </thead>
@@ -327,7 +327,7 @@ export default function DashboardPage() {
                                     {recentReturns.map((r, i) => (
                                         <tr key={r.id} className={i % 2 === 0 ? "bg-white" : "bg-gray-50"}>
                                             <td className="px-4 py-3 font-medium text-gray-800">{r.book?.title}</td>
-                                            <td className="px-4 py-3 font-mono text-gray-400 text-xs">{r.book?.isbn}</td>
+                                            <td className="px-4 py-3 font-mono text-gray-400 text-xs">{r.book?.barcode}<br/>{r.book?.isbn}</td>
                                             <td className="px-4 py-3 text-gray-700">{r.borrower?.name}</td>
                                             <td className="px-4 py-3 text-gray-400">{r.borrower?.code}</td>
                                             <td className="px-4 py-3 text-gray-500">{r.returned_by_phone || "-"}</td>

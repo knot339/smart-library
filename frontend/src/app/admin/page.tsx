@@ -3,7 +3,7 @@ import { useState, useEffect, useCallback } from "react";
 import { API_BASE_URL as API } from "../../lib/config";
 
 // ---- ประเภทข้อมูลที่ใช้ภายในระบบ (Types) ----
-type Book = { id: number; isbn: string; title: string; author: string; category: string; stock: number };
+type Book = { id: number; isbn: string; barcode: string; bibid: string; title: string; author: string; category: string; stock: number; callno: string; mattypeid: number };
 type Borrower = { id: number; code: string; name: string; type: string; phone: string };
 type BorrowRecord = {
   id: number;
@@ -17,7 +17,7 @@ type BorrowRecord = {
 };
 type Tab = "books" | "borrowers" | "borrows";
 
-const emptyBook = { isbn: "", title: "", author: "", category: "", stock: 1 };
+const emptyBook = { isbn: "", barcode: "", bibid: "", title: "", author: "", category: "", callno: "", mattypeid: 1, stock: 1 };
 const emptyBorrower = { code: "", name: "", type: "student", phone: "" };
 const emptyBorrow = { borrower_id: "", book_id: "" };
 
@@ -87,7 +87,7 @@ export default function AdminPage() {
 
   const openBookModal = (book?: Book) => {
     setEditingBook(book || null);
-    setBookForm(book ? { isbn: book.isbn, title: book.title, author: book.author, category: book.category, stock: book.stock } : emptyBook);
+    setBookForm(book ? { isbn: book.isbn, barcode: book.barcode, bibid: book.bibid, title: book.title, author: book.author, category: book.category, callno: book.callno, mattypeid: book.mattypeid, stock: book.stock } : emptyBook);
     setBookModal(true);
   };
 
@@ -175,7 +175,7 @@ export default function AdminPage() {
               <table className="w-full text-sm">
                 <thead className="bg-blue-50 text-blue-900">
                   <tr>
-                    {["ISBN", "ชื่อหนังสือ", "ผู้แต่ง", "หมวดหมู่", "จำนวน", "จัดการ"].map(h => (
+                    {["Barcode / ISBN", "ชื่อหนังสือ", "ผู้แต่ง", "หมวดหมู่", "จำนวน", "จัดการ"].map(h => (
                       <th key={h} className="px-4 py-3 text-left font-semibold">{h}</th>
                     ))}
                   </tr>
@@ -186,7 +186,7 @@ export default function AdminPage() {
                   )}
                   {books.map((b, i) => (
                     <tr key={b.id} className={i % 2 === 0 ? "bg-white" : "bg-gray-50"}>
-                      <td className="px-4 py-3 font-mono text-gray-500">{b.isbn}</td>
+                      <td className="px-4 py-3 font-mono text-gray-500">{b.barcode}<br/><span className="text-xs text-gray-400">{b.isbn}</span></td>
                       <td className="px-4 py-3 font-medium text-gray-800">{b.title}</td>
                       <td className="px-4 py-3 text-gray-600">{b.author}</td>
                       <td className="px-4 py-3"><span className="bg-blue-100 text-blue-700 px-2 py-1 rounded text-xs">{b.category}</span></td>
@@ -305,9 +305,12 @@ export default function AdminPage() {
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-8">
             <h3 className="text-xl font-bold text-blue-900 mb-6">{editingBook ? "✏️ แก้ไขหนังสือ" : "➕ เพิ่มหนังสือ"}</h3>
             {[
+              { label: "Barcode", key: "barcode", placeholder: "Barcode หนังสือ" },
+              { label: "BibID", key: "bibid", placeholder: "BibID ของห้องสมุด" },
               { label: "ISBN", key: "isbn", placeholder: "978-XXXXXXXXXX" },
               { label: "ชื่อหนังสือ", key: "title", placeholder: "ชื่อหนังสือ" },
               { label: "ผู้แต่ง", key: "author", placeholder: "ชื่อผู้แต่ง" },
+              { label: "เลขเรียก (Call No)", key: "callno", placeholder: "020ป1711ส" },
               { label: "หมวดหมู่", key: "category", placeholder: "เช่น วิทยาศาสตร์, นิยาย" },
             ].map(({ label, key, placeholder }) => (
               <div key={key} className="mb-4">
