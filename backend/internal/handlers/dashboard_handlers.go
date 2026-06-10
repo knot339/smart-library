@@ -88,7 +88,7 @@ func GetBooksInCabinet(c *fiber.Ctx) error {
 func GetRecentReturns(c *fiber.Ctx) error {
 	var records []models.BorrowRecord
 	database.DB.Preload("Book").Preload("Borrower").
-		Where("status = ?", "returned").
+		Where("status IN ?", []string{"returned", "archived"}).
 		Order("returned_at DESC").
 		Limit(20).
 		Find(&records)
@@ -99,8 +99,9 @@ func ResetCabinet(c *fiber.Ctx) error {
 	hardware.Shared.Capacity = 0
 	hardware.Shared.SetClosed()
 
-	database.DB.Where("status = ?", "returned").
-		Delete(&models.BorrowRecord{})
+	database.DB.Model(&models.BorrowRecord{}).
+		Where("status = ?", "returned").
+		Update("status", "archived")
 
 	return c.JSON(fiber.Map{
 		"message":      "รีเซ็ตรายการในตู้สำเร็จ",

@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 
-import SrivijayaPattern from "../components/SrivijayaPattern";
+import AnimatedBackground from "../components/AnimatedBackground";
 import { Step, Borrower, Book, BorrowRecord } from "../types";
 import { API_BASE_URL as API, WS_BASE_URL } from "../lib/config";
 
@@ -94,13 +94,6 @@ export default function TabletPage() {
     }
   }, [step]);
 
-  // สั่งการปิดตู้รับคืนเมื่อผู้ใช้งานย้อนกลับไปยังหน้าเริ่มต้น (หากตู้กำลังเปิดอยู่)
-  useEffect(() => {
-    if (step === "select-user" && motorOpen) {
-      fetch(`${API}/dashboard/motor/close`, { method: "POST" }).catch(() => { });
-      setMotorOpen(false);
-    }
-  }, [step, motorOpen]);
 
   // ขั้นตอนที่ 1: ตรวจสอบข้อมูลเพื่อยืนยันตัวตนของผู้ใช้งานจากฐานข้อมูล
   const handleIdentify = async () => {
@@ -162,29 +155,47 @@ export default function TabletPage() {
   // ขั้นตอนที่ 2: ตรวจสอบข้อมูลรายละเอียดของหนังสือโดยใช้รหัส Barcode
   const handleCheckBook = async () => {
     if (!inputBarcode.trim()) {
-      setErrorMsg("กรณาวางหนังสือบนช่องรับ");
+      setBooksToReturn([]);
       return;
     }
+
+    const barcodes = inputBarcode.split(/[\s,]+/).filter(b => b.trim() !== "");
+    if (barcodes.length === 0) {
+      setBooksToReturn([]);
+      return;
+    }
+
     setLoading(true);
     setErrorMsg("");
-    try {
-      const res = await fetch(`${API}/book/barcode/${inputBarcode.trim()}`);
-      const data = await res.json();
-      if (!res.ok) {
-        setErrorMsg(data.error || "ไม่พบหนังสือในระบบ");
-        setLoading(false);
-        return;
+
+    let newBooks: Book[] = [];
+    let errors: string[] = [];
+
+    for (const barcode of barcodes) {
+      try {
+        const res = await fetch(`${API}/book/barcode/${barcode.trim()}`);
+        const data = await res.json();
+        if (!res.ok) {
+          errors.push(`${barcode}: ${data.error || "ไม่พบหนังสือ"}`);
+          continue;
+        }
+
+        if (newBooks.some(b => b.id === data.id)) {
+          continue;
+        }
+
+        newBooks.push(data);
+      } catch {
+        errors.push(`${barcode}: เกิดข้อผิดพลาด`);
       }
-      if (booksToReturn.some(b => b.id === data.id)) {
-        setErrorMsg("สแกนหนังสือเล่มนี้ไปแล้ว");
-        setLoading(false);
-        return;
-      }
-      setBooksToReturn(prev => [...prev, data]);
-      setInputBarcode(""); // เคลียร์ช่องให้พร้อมสแกนเล่มถัดไป
-    } catch {
-      setErrorMsg("เกิดข้อผิดพลาด กรุณาลองใหม่");
     }
+
+    setBooksToReturn(newBooks);
+
+    if (errors.length > 0) {
+      setErrorMsg(errors.join(" | "));
+    }
+
     setLoading(false);
   };
 
@@ -266,21 +277,47 @@ export default function TabletPage() {
   };
 
   const handleCheckBookWithBarcode = async (barcode: string) => {
-    if (!barcode.trim()) return;
+    if (!barcode.trim()) {
+      setBooksToReturn([]);
+      return;
+    }
+    
+    const barcodes = barcode.split(/[\s,]+/).filter(b => b.trim() !== "");
+    if (barcodes.length === 0) {
+      setBooksToReturn([]);
+      return;
+    }
+
     setLoading(true);
     setErrorMsg("");
-    try {
-      const res = await fetch(`${API}/book/barcode/${barcode.trim()}`);
-      const data = await res.json();
-      if (!res.ok) { setErrorMsg(data.error); setLoading(false); return; }
-      if (booksToReturn.some(b => b.id === data.id)) {
-        setErrorMsg("สแกนหนังสือเล่มนี้ไปแล้ว");
-        setLoading(false);
-        return;
+    
+    let newBooks: Book[] = [];
+    let errors: string[] = [];
+
+    for (const b of barcodes) {
+      try {
+        const res = await fetch(`${API}/book/barcode/${b.trim()}`);
+        const data = await res.json();
+        if (!res.ok) {
+          errors.push(`${b}: ${data.error || "ไม่พบหนังสือ"}`);
+          continue;
+        }
+        
+        if (newBooks.some(x => x.id === data.id)) {
+          continue;
+        }
+        newBooks.push(data);
+      } catch {
+        errors.push(`${b}: เกิดข้อผิดพลาด`);
       }
-      setBooksToReturn(prev => [...prev, data]);
-      setInputBarcode("");
-    } catch { setErrorMsg("เกิดข้อผิดพลาด"); }
+    }
+
+    setBooksToReturn(newBooks);
+
+    if (errors.length > 0) {
+      setErrorMsg(errors.join(" | "));
+    }
+    
     setLoading(false);
   };
 
@@ -298,49 +335,57 @@ export default function TabletPage() {
   // ตรวจสอบและแสดงผลหน้าจอแจ้งเตือน ในกรณีที่ความจุของตู้รับคืนหนังสือเต็ม
   if (isFull) {
     return (
-      <div className="min-h-screen bg-gradient-to-b from-blue-950 to-blue-900 flex flex-col relative">
-        <SrivijayaPattern />
+      <div className="min-h-screen bg-gradient-to-b from-blue-950 to-blue-900 flex flex-col select-none relative">
+        <AnimatedBackground />
         <div className="relative z-10 flex flex-col flex-1">
 
           {/* Header */}
-          <div className="bg-blue-950 px-8 py-4 flex justify-between items-center border-b border-blue-800">
-            <div className="flex items-center gap-4">
-              <div className="bg-blue-700 rounded-full w-12 h-12 flex items-center justify-center text-2xl">📚</div>
+          <div className="bg-blue-950 px-10 py-6 flex justify-between items-center border-b border-blue-800 shadow-lg">
+            <div className="flex items-center gap-5">
+              <div className="bg-white rounded-full w-16 h-16 flex items-center justify-center p-2">
+                <img src="/images/LOGO-RUTS-07-2-copy.png" alt="RUTS Logo" className="w-full h-full object-contain" />
+              </div>
               <div>
-                <p className="text-blue-300 text-xs tracking-widest uppercase">Book Return Station</p>
-                <h1 className="text-white text-lg font-bold">ระบบรับคืนหนังสืออัตโนมัติ</h1>
+                <p className="text-blue-300 text-base tracking-widest uppercase mb-1">Book Return Station</p>
+                <h1 className="text-white text-2xl font-bold">ระบบรับคืนหนังสืออัตโนมัติ</h1>
               </div>
             </div>
             <div className="text-right">
-              <p className="text-blue-400 text-xs">เวลาปัจจุบัน</p>
-              <p className="text-white text-2xl font-mono font-bold">{time}</p>
+              <p className="text-blue-400 text-base mb-1">เวลาปัจจุบัน</p>
+              <p className="text-white text-4xl font-mono font-bold">{time}</p>
+              <div className="flex items-center gap-2 mt-2 justify-end">
+                <div className={`w-3 h-3 rounded-full bg-red-400`} />
+                <p className={`text-base text-red-300`}>
+                  ตู้เต็ม
+                </p>
+              </div>
             </div>
           </div>
 
           {/* ส่วนแสดงหน้าจอแจ้งเตือนเมื่อตู้รับคืนหนังสือเต็ม */}
           <div className="flex-1 flex items-center justify-center p-8">
-            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md p-10 text-center">
+            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-xl p-12 text-center">
 
               {/* ไอคอนแจ้งเตือน */}
-              <div className="w-24 h-24 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-6">
-                <span className="text-5xl">🚫</span>
+              <div className="w-32 h-32 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-8">
+                <span className="text-7xl">🚫</span>
               </div>
 
-              <h2 className="text-2xl font-bold text-red-600 mb-3">
+              <h2 className="text-5xl font-bold text-red-600 mb-6">
                 ขออภัย — ตู้เต็มแล้ว
               </h2>
 
-              <p className="text-gray-600 mb-2 text-lg">
+              <p className="text-gray-600 mb-4 text-3xl font-semibold">
                 ขณะนี้ตู้รับคืนหนังสือเต็มแล้ว
               </p>
-              <p className="text-gray-500 text-sm mb-6">
+              <p className="text-gray-500 text-2xl mb-10">
                 ไม่สามารถรับคืนหนังสือได้ในขณะนี้
               </p>
 
               {/* ส่วนแสดงคำแนะนำการดำเนินการสำหรับผู้ใช้งาน */}
-              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-6 text-left">
-                <p className="text-blue-700 font-semibold text-sm mb-2">📋 กรุณาดำเนินการดังนี้</p>
-                <ul className="text-blue-600 text-sm space-y-1">
+              <div className="bg-blue-50 border border-blue-200 rounded-2xl p-8 mb-8 text-left">
+                <p className="text-blue-700 font-bold text-2xl mb-4">📋 กรุณาดำเนินการดังนี้</p>
+                <ul className="text-blue-600 text-xl space-y-3 pl-2">
                   <li>• ติดต่อบรรณารักษ์ที่เคาน์เตอร์</li>
                   <li>• คืนหนังสือที่เคาน์เตอร์บริการโดยตรง</li>
                   <li>• รอจนกว่าเจ้าหน้าที่จะเคลียร์ตู้</li>
@@ -348,7 +393,7 @@ export default function TabletPage() {
               </div>
 
               {/* ข้อความแจ้งเตือนเกี่ยวกับการอัปเดตสถานะอัตโนมัติของระบบ */}
-              <p className="text-gray-400 text-xs">
+              <p className="text-gray-400 text-lg">
                 🔄 ระบบจะอัปเดตสถานะอัตโนมัติทุก 3 วินาที
                 <br />หน้านี้จะกลับสู่ปกติเมื่อตู้มีพื้นที่ว่าง
               </p>
@@ -356,7 +401,7 @@ export default function TabletPage() {
           </div>
 
           {/* Footer */}
-          <div className="relative z-10 text-center py-3 text-white text-xs bg-blue-950 border-t border-blue-800">
+          <div className="relative z-10 text-center py-6 text-white text-xl bg-blue-950 border-t border-blue-800">
             หากพบปัญหา กรุณาติดต่อบรรณารักษ์ที่เคาน์เตอร์
           </div>
 
@@ -367,7 +412,7 @@ export default function TabletPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-blue-950 to-blue-900 flex flex-col select-none relative">
-      <SrivijayaPattern />
+      <AnimatedBackground />
       <div className="relative z-10 flex flex-col flex-1">
 
         {/* Header */}
@@ -465,7 +510,7 @@ export default function TabletPage() {
                   <h2 className="text-3xl font-bold text-blue-900 mb-1">ตรวจสอบหนังสือ</h2>
                 </div>
 
-                <div className="flex-1 overflow-y-auto px-2 my-2 space-y-4">
+                <div className="flex-1 overflow-y-auto custom-scrollbar px-2 my-2 space-y-4">
                   {/* ส่วนแสดงรายละเอียดข้อมูลของผู้ใช้งานที่กำลังทำรายการ */}
                   <div className="bg-blue-50 rounded-2xl p-4 border border-blue-100 text-left">
                     <p className="text-blue-400 text-lg">ผู้คืนหนังสือ</p>
@@ -480,7 +525,7 @@ export default function TabletPage() {
                   {activeBorrows.length > 0 && (
                     <div className="bg-yellow-50 rounded-2xl p-4 border border-yellow-200 text-left">
                       <p className="text-yellow-700 text-lg font-semibold mb-2">📋 หนังสือที่ยังยืมอยู่ ({activeBorrows.length} เล่ม)</p>
-                      <div className="max-h-32 overflow-y-auto pr-2">
+                      <div className="pr-2">
                         {activeBorrows.map((r, idx) => (
                           <div key={r.NO || idx} className="text-xl text-gray-700 py-1 border-b border-yellow-100 last:border-0">
                             <p className="font-medium">{r.TITLE}</p>
@@ -501,11 +546,10 @@ export default function TabletPage() {
                   {booksToReturn.length > 0 && (
                     <div className="bg-green-50 rounded-2xl p-4 border border-green-200 text-left">
                       <p className="text-green-700 font-semibold text-lg mb-2">✅ หนังสือที่สแกนแล้ว ({booksToReturn.length} เล่ม)</p>
-                      <div className="max-h-48 overflow-y-auto pr-2">
+                      <div className="pr-2">
                         {booksToReturn.map(b => (
                           <div key={b.id} className="text-xl text-gray-800 py-1 border-b border-green-100 flex justify-between items-center last:border-0">
                             <span className="truncate pr-3">{b.title}</span>
-                            <button onClick={() => setBooksToReturn(booksToReturn.filter(x => x.id !== b.id))} className="text-red-500 font-bold hover:bg-red-100 px-4 py-2 rounded text-base">ลบ</button>
                           </div>
                         ))}
                       </div>
@@ -526,12 +570,8 @@ export default function TabletPage() {
                   />
                   {errorMsg && <p className="text-red-500 text-base mb-3">{errorMsg}</p>}
                   <div className="flex gap-3">
-                    <button onClick={handleCheckBook} disabled={loading || !inputBarcode.trim()}
-                      className="flex-1 bg-blue-100 hover:bg-blue-200 text-blue-700 font-bold py-4 rounded-2xl text-lg transition disabled:opacity-50">
-                      {loading ? "⏳..." : "+ สแกนเพิ่ม"}
-                    </button>
                     <button onClick={() => setStep("drop")} disabled={booksToReturn.length === 0}
-                      className="flex-[2] bg-blue-700 hover:bg-blue-800 disabled:bg-gray-300 text-white font-bold py-4 rounded-2xl text-xl transition">
+                      className="w-full bg-blue-700 hover:bg-blue-800 disabled:bg-gray-300 text-white font-bold py-4 rounded-2xl text-xl transition">
                       ดำเนินการคืน ({booksToReturn.length} เล่ม) →
                     </button>
                   </div>
@@ -548,11 +588,11 @@ export default function TabletPage() {
                   <h2 className="text-4xl font-bold text-blue-900 mb-6">ดำเนินการคืนหนังสือเข้าตู้</h2>
                 </div>
 
-                <div className="flex-1 overflow-y-auto px-2 my-2 space-y-6">
+                <div className="flex-1 overflow-y-auto custom-scrollbar px-2 my-2 space-y-6">
                   {/* ส่วนแสดงรายละเอียดข้อมูลของหนังสือที่ได้รับการตรวจสอบแล้ว */}
                   <div className="bg-green-50 rounded-2xl p-5 border border-green-200 text-left">
                     <p className="text-green-600 text-base font-semibold mb-3">✅ เตรียมคืน ({booksToReturn.length} เล่ม)</p>
-                    <div className="max-h-48 overflow-y-auto pr-2">
+                    <div className="pr-2">
                       {booksToReturn.map(b => (
                         <div key={b.id} className="border-b border-green-100 last:border-0 py-2">
                           <p className="text-gray-800 text-xl font-bold">{b.title}</p>
@@ -567,7 +607,7 @@ export default function TabletPage() {
                   {activeBorrows.length > 0 && (
                     <div className="bg-yellow-50 rounded-2xl p-5 border border-yellow-200 text-left">
                       <p className="text-yellow-700 text-base font-semibold mb-3">📚 หนังสือที่ยังไม่คืน ({activeBorrows.length} เล่ม)</p>
-                      <div className="space-y-3 max-h-48 overflow-y-auto pr-2">
+                      <div className="space-y-3 pr-2">
                         {activeBorrows.map((r, idx) => (
                           <div key={r.NO || idx} className="text-lg text-gray-700 pb-3 border-b border-yellow-100 last:border-0">
                             <p className="font-medium">{r.TITLE}</p>
@@ -605,12 +645,12 @@ export default function TabletPage() {
                   <p className="text-gray-500 text-xl mb-6">บันทึกลงฐานข้อมูลเรียบร้อยแล้ว</p>
                 </div>
 
-                <div className="flex-1 overflow-y-auto px-2 space-y-6">
+                <div className="flex-1 overflow-y-auto custom-scrollbar px-2 space-y-6">
                   <div className="bg-green-50 border border-green-200 rounded-2xl p-5 text-left">
                     <p className="text-green-600 text-base font-semibold mb-3">✅ รายละเอียดการคืน</p>
                     <p className="text-gray-700 text-lg"><span className="text-gray-400">ผู้คืน: </span>{borrower?.name}</p>
                     <p className="text-gray-700 text-lg"><span className="text-gray-400">จำนวน: </span>{booksToReturn.length} เล่ม</p>
-                    <div className="pl-5 border-l-4 border-green-200 my-3 max-h-32 overflow-y-auto pr-2">
+                    <div className="pl-5 border-l-4 border-green-200 my-3 max-h-32 overflow-y-auto custom-scrollbar pr-2">
                       {booksToReturn.map((b, i) => <p key={i} className="text-gray-700 text-lg truncate">{b.title}</p>)}
                     </div>
                     <p className="text-gray-700 text-lg"><span className="text-gray-400">เวลา: </span>{new Date().toLocaleString("th-TH")}</p>
@@ -651,8 +691,8 @@ export default function TabletPage() {
         </div>
 
         <div className="relative z-10 text-center py-6 text-white text-xl bg-blue-950 border-t border-blue-800">
-            หากพบปัญหา กรุณาติดต่อบรรณารักษ์ที่เคาน์เตอร์
-          </div>
+          หากพบปัญหา กรุณาติดต่อบรรณารักษ์ที่เคาน์เตอร์
+        </div>
       </div>
     </div>
   );

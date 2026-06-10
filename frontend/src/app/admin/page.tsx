@@ -280,8 +280,8 @@ export default function AdminPage() {
                       <td className="px-4 py-3 text-gray-500">{r.returned_at ? fmtDate(r.returned_at) : "-"}</td>
                       <td className="px-4 py-3 text-gray-600 font-mono">{r.returned_by_phone || "-"}</td>
                       <td className="px-4 py-3">
-                        <span className={`px-2 py-1 rounded text-xs font-bold ${r.status === "returned" ? "bg-green-100 text-green-700" : isOverdue(r.due_date, r.status) ? "bg-red-100 text-red-700" : "bg-yellow-100 text-yellow-700"}`}>
-                          {r.status === "returned" ? "คืนแล้ว" : isOverdue(r.due_date, r.status) ? "เกินกำหนด" : "กำลังยืม"}
+                        <span className={`px-2 py-1 rounded text-xs font-bold ${(r.status === "returned" || r.status === "archived") ? "bg-green-100 text-green-700" : isOverdue(r.due_date, r.status) ? "bg-red-100 text-red-700" : "bg-yellow-100 text-yellow-700"}`}>
+                          {(r.status === "returned" || r.status === "archived") ? "คืนแล้ว" : isOverdue(r.due_date, r.status) ? "เกินกำหนด" : "กำลังยืม"}
                         </span>
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap">

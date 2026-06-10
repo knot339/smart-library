@@ -7,11 +7,7 @@ type BookInCabinet = {
     id: number; title: string; author: string;
     isbn: string; barcode: string; returned_at: string; returned_by: string; returned_by_phone?: string;
 };
-type ReturnRecord = {
-    id: number; returned_at: string; returned_by_phone: string;
-    book: { title: string; isbn: string; barcode: string };
-    borrower: { name: string; code: string; phone?: string };
-};
+
 
 const MOTOR_CONFIG: Record<MotorStatus, {
     icon: string; label: string; desc: string;
@@ -40,11 +36,9 @@ export default function DashboardPage() {
     const [motorStatus, setMotorStatus] = useState<MotorStatus>("closed");
     const [cabinetOnline, setCabinetOnline] = useState(false);
     const [booksInCabinet, setBooksInCabinet] = useState<BookInCabinet[]>([]);
-    const [recentReturns, setRecentReturns] = useState<ReturnRecord[]>([]);
     const [loadingMotor, setLoadingMotor] = useState("");
     const [msg, setMsg] = useState({ text: "", type: "" });
     const [time, setTime] = useState("");
-    const [tab, setTab] = useState<"books" | "history">("books");
     const [confirmReset, setConfirmReset] = useState(false);
 
     const notify = (text: string, type = "success") => {
@@ -80,21 +74,13 @@ export default function DashboardPage() {
         } catch { }
     }, []);
 
-    const fetchHistory = useCallback(async () => {
-        try {
-            const res = await fetch(`${API}/dashboard/recent-returns`);
-            const data = await res.json();
-            setRecentReturns(Array.isArray(data) ? data : []);
-        } catch { }
-    }, []);
-
     useEffect(() => {
-        fetchCabinet(); fetchBooks(); fetchHistory();
+        fetchCabinet(); fetchBooks();
         const t = setInterval(() => {
-            fetchCabinet(); fetchBooks(); fetchHistory();
+            fetchCabinet(); fetchBooks();
         }, 5000);
         return () => clearInterval(t);
-    }, [fetchCabinet, fetchBooks, fetchHistory]);
+    }, [fetchCabinet, fetchBooks]);
 
     const sendMotorCommand = async (cmd: "open" | "close" | "dump") => {
         setLoadingMotor(cmd);
@@ -131,7 +117,7 @@ export default function DashboardPage() {
 
             {/* Header */}
             <div className="bg-blue-900 text-white px-8 py-4 shadow-lg">
-                <div className="flex justify-between items-center">
+                <div className="flex flex-col md:flex-row justify-between items-center gap-4 md:gap-0">
                     <div className="flex items-center gap-4">
                         <div className="bg-blue-700 rounded-full w-12 h-12 flex items-center justify-center text-2xl">🏛️</div>
                         <div>
@@ -139,7 +125,7 @@ export default function DashboardPage() {
                             <h1 className="text-xl font-bold">แผงควบคุมพนักงาน</h1>
                         </div>
                     </div>
-                    <div className="flex items-center gap-4">
+                    <div className="flex flex-col md:flex-row items-center gap-4">
                         {msg.text && (
                             <div className={`px-4 py-2 rounded-lg text-sm font-semibold transition ${msg.type === "error" ? "bg-red-500" : "bg-green-500"}`}>
                                 {msg.text}
@@ -156,7 +142,7 @@ export default function DashboardPage() {
             <div className="p-6 max-w-5xl mx-auto">
 
                 {/* Status Cards */}
-                <div className="grid grid-cols-3 gap-4 mb-6">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
 
                     {/* สถานะการเชื่อมต่อกับระบบฐานข้อมูลและเซิร์ฟเวอร์ */}
                     <div className="bg-white rounded-xl shadow p-5 flex items-center gap-4">
@@ -209,7 +195,7 @@ export default function DashboardPage() {
                     <h2 className="text-lg font-bold text-gray-700 mb-2">🎛️ ควบคุมตู้รับคืน</h2>
                     <p className="text-gray-400 text-xs mb-4">เลือกสถานะที่ต้องการสั่งงานมอเตอร์แกนชัก</p>
 
-                    <div className="grid grid-cols-3 gap-4">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
 
                         {/* ปุ่มควบคุม: ปิดตู้รับคืน */}
                         <button
@@ -277,23 +263,16 @@ export default function DashboardPage() {
                     </div>
                 </div>
 
-                {/* ส่วนการจัดการแท็บแสดงผลข้อมูลรายการในตู้และประวัติการคืน */}
+                {/* ส่วนการแสดงผลข้อมูลรายการในตู้ */}
                 <div className="bg-white rounded-xl shadow overflow-hidden">
-                    <div className="flex border-b">
-                        {([["books", `📦 หนังสือในตู้ (${booksInCabinet.length} เล่ม)`],
-                        ["history", `🕐 ประวัติการคืน (${recentReturns.length} รายการ)`]] as const).map(([key, label]) => (
-                            <button key={key} onClick={() => setTab(key)}
-                                className={`flex-1 py-4 font-semibold transition ${tab === key ? "bg-blue-50 text-blue-700 border-b-2 border-blue-700" : "text-gray-500 hover:text-gray-700"}`}>
-                                {label}
-                            </button>
-                        ))}
+                    <div className="bg-blue-50 px-6 py-4 border-b text-blue-900 font-bold">
+                        📦 หนังสือในตู้ ({booksInCabinet.length} เล่ม)
                     </div>
 
-                    {/* เนื้อหาแท็บ: แสดงรายการหนังสือที่อยู่ภายในตู้รับคืน */}
-                    {tab === "books" && (
-                        booksInCabinet.length === 0
+                    <div className="overflow-x-auto">
+                        {booksInCabinet.length === 0
                             ? <div className="text-center py-12 text-gray-400"><p className="text-4xl mb-2">📭</p><p>ไม่มีหนังสือในตู้ขณะนี้</p></div>
-                            : <table className="w-full text-sm">
+                            : <table className="w-full text-sm min-w-[600px]">
                                 <thead className="bg-blue-50 text-blue-900">
                                     <tr>{["ชื่อหนังสือ", "ผู้แต่ง", "Barcode / ISBN", "คืนเมื่อ", "คืนโดย"].map(h => (
                                         <th key={h} className="px-4 py-3 text-left font-semibold">{h}</th>
@@ -311,32 +290,8 @@ export default function DashboardPage() {
                                     ))}
                                 </tbody>
                             </table>
-                    )}
-
-                    {/* เนื้อหาแท็บ: แสดงประวัติการทำรายการคืนหนังสือล่าสุด */}
-                    {tab === "history" && (
-                        recentReturns.length === 0
-                            ? <div className="text-center py-12 text-gray-400"><p className="text-4xl mb-2">📋</p><p>ยังไม่มีประวัติการคืน</p></div>
-                            : <table className="w-full text-sm">
-                                <thead className="bg-blue-50 text-blue-900">
-                                    <tr>{["ชื่อหนังสือ", "Barcode / ISBN", "ผู้ยืม", "รหัส", "เบอร์โทรผู้คืน", "วันที่คืน"].map(h => (
-                                        <th key={h} className="px-4 py-3 text-left font-semibold">{h}</th>
-                                    ))}</tr>
-                                </thead>
-                                <tbody>
-                                    {recentReturns.map((r, i) => (
-                                        <tr key={r.id} className={i % 2 === 0 ? "bg-white" : "bg-gray-50"}>
-                                            <td className="px-4 py-3 font-medium text-gray-800">{r.book?.title}</td>
-                                            <td className="px-4 py-3 font-mono text-gray-400 text-xs">{r.book?.barcode}<br/>{r.book?.isbn}</td>
-                                            <td className="px-4 py-3 text-gray-700">{r.borrower?.name}</td>
-                                            <td className="px-4 py-3 text-gray-400">{r.borrower?.code}</td>
-                                            <td className="px-4 py-3 text-gray-500">{r.returned_by_phone || "-"}</td>
-                                            <td className="px-4 py-3 text-gray-500">{fmtDate(r.returned_at)}</td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                    )}
+                        }
+                    </div>
                 </div>
 
                 <p className="text-center text-gray-400 text-xs mt-4">🔄 ข้อมูลอัปเดตอัตโนมัติทุก 5 วินาที</p>
