@@ -2,6 +2,7 @@ package main
 
 import (
 	"smart-library-api/internal/database"
+	"smart-library-api/internal/handlers"
 	"smart-library-api/internal/routes"
 
 	"github.com/gofiber/fiber/v2"
@@ -10,6 +11,7 @@ import (
 
 func main() {
 	database.Connect()
+	handlers.InitMQTT()
 
 	app := fiber.New()
 	app.Use(cors.New(cors.Config{

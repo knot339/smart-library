@@ -4,21 +4,49 @@ import (
 	"encoding/json"
 	"log"
 	"sync"
+	"os"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/websocket/v2"
+	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
 
 type WSMessage struct {
-	Type  string `json:"type"`  // ประเภทของอุปกรณ์ ("barcode" หรือ "rfid")
-	Value string `json:"value"` // ข้อมูลที่อ่านได้จากอุปกรณ์
+	Type  string `json:"type"`  // ประเภทของอุปกรณ์ ("barcode" หรือ "rfid", "led", "motor")
+	Value string `json:"value"` // ข้อมูลที่อ่านได้จากอุปกรณ์ หรือสถานะ
 }
 
 // ตัวแปรสำหรับจัดเก็บรายชื่ออุปกรณ์แท็บเล็ตที่เชื่อมต่ออยู่
 var (
 	tabletClients = make(map[*websocket.Conn]bool)
 	clientMu      sync.Mutex
+	MQTTClient    mqtt.Client
 )
+
+// ฟังก์ชันเริ่มการเชื่อมต่อ MQTT
+func InitMQTT() {
+	opts := mqtt.NewClientOptions()
+	opts.AddBroker("tcp://smart-library-mqtt:1883")
+	opts.SetClientID("smart-library-backend")
+	
+	// สำหรับรันนอก Docker เพื่อทดสอบ ถ้าไม่เจอ smart-library-mqtt ให้ใช้ localhost
+	if os.Getenv("APP_MODE") != "simulation" {
+		opts.AddBroker("tcp://localhost:1883")
+	}
+
+	opts.OnConnect = func(c mqtt.Client) {
+		log.Println("✅ Connected to MQTT Broker")
+	}
+	opts.OnConnectionLost = func(c mqtt.Client, err error) {
+		log.Printf("❌ MQTT Connection Lost: %v", err)
+	}
+
+	MQTTClient = mqtt.NewClient(opts)
+	if token := MQTTClient.Connect(); token.Wait() && token.Error() != nil {
+		log.Printf("Failed to connect to MQTT: %v", token.Error())
+	}
+}
 
 // ฟังก์ชันจัดการการเชื่อมต่อผ่าน WebSocket สำหรับอุปกรณ์แท็บเล็ต
 func TabletWS(c *websocket.Conn) {
@@ -37,35 +65,6 @@ func TabletWS(c *websocket.Conn) {
 	}()
 
 	// รอรับข้อความเพื่อรักษาสถานะการเชื่อมต่อ (Keep-Alive)
-	for {
-		if _, _, err := c.ReadMessage(); err != nil {
-			break
-		}
-	}
-}
-
-// ตัวแปรสำหรับจัดเก็บรายชื่ออุปกรณ์ ESP32 ที่เชื่อมต่ออยู่
-var (
-	esp32Clients = make(map[*websocket.Conn]bool)
-	esp32Mu      sync.Mutex
-)
-
-// ฟังก์ชันจัดการการเชื่อมต่อผ่าน WebSocket สำหรับอุปกรณ์ ESP32
-func ESP32WS(c *websocket.Conn) {
-	esp32Mu.Lock()
-	esp32Clients[c] = true
-	esp32Mu.Unlock()
-
-	log.Println("✅ ESP32 connected")
-
-	defer func() {
-		esp32Mu.Lock()
-		delete(esp32Clients, c)
-		esp32Mu.Unlock()
-		c.Close()
-		log.Println("❌ ESP32 disconnected")
-	}()
-
 	for {
 		if _, _, err := c.ReadMessage(); err != nil {
 			break
@@ -93,16 +92,15 @@ func SimulatorSend(c *fiber.Ctx) error {
 		clientMu.Unlock()
 	}
 
-	// ส่งคำสั่งไปยังอุปกรณ์ ESP32 (สั่งการ LED หรือมอเตอร์)
-	if msg.Type == "led" || msg.Type == "motor" {
-		esp32Mu.Lock()
-		for client := range esp32Clients {
-			if err := client.WriteMessage(1, payload); err != nil {
-				client.Close()
-				delete(esp32Clients, client)
-			}
+	// ส่งคำสั่งไปยังอุปกรณ์ ESP32 ผ่าน MQTT
+	// เดิมส่งแค่ led กับ motor ตอนนี้ให้ส่ง barcode และ rfid ไปด้วย
+	if msg.Type == "led" || msg.Type == "motor" || msg.Type == "barcode" || msg.Type == "rfid" {
+		if MQTTClient != nil && MQTTClient.IsConnected() {
+			token := MQTTClient.Publish("smartlibrary/esp32/control", 0, false, payload)
+			token.WaitTimeout(2 * time.Second)
+		} else {
+			log.Println("MQTT Client is not connected")
 		}
-		esp32Mu.Unlock()
 	}
 
 	return c.JSON(fiber.Map{
@@ -110,3 +108,4 @@ func SimulatorSend(c *fiber.Ctx) error {
 		"clients": len(tabletClients),
 	})
 }
+

@@ -14,8 +14,7 @@ func Setup(app *fiber.App) {
 	// เส้นทางสำหรับการรับข้อมูลจากระบบจำลอง (Simulator)
 	app.Post("/api/simulator/send", handlers.SimulatorSend)
 
-	// เส้นทางสำหรับการเชื่อมต่อ WebSocket ของอุปกรณ์ ESP32
-	app.Get("/ws/esp32", websocket.New(handlers.ESP32WS))
+	// เส้นทางสำหรับการเชื่อมต่อ WebSocket ของอุปกรณ์ ESP32 ถูกเปลี่ยนไปใช้ MQTT แล้ว
 
 	// เส้นทาง API สำหรับระบบจำลองการทำงานของฮาร์ดแวร์
 	app.Get("/api/status", handlers.GetStatus)

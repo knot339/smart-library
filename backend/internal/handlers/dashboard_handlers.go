@@ -1,12 +1,24 @@
 package handlers
 
 import (
+	"encoding/json"
+	"time"
+
 	"smart-library-api/internal/database"
 	"smart-library-api/internal/hardware"
 	"smart-library-api/internal/models"
 
 	"github.com/gofiber/fiber/v2"
 )
+
+func publishMotor(status string) {
+	if MQTTClient != nil && MQTTClient.IsConnected() {
+		msg := WSMessage{Type: "motor", Value: status}
+		payload, _ := json.Marshal(msg)
+		token := MQTTClient.Publish("smartlibrary/esp32/control", 0, false, payload)
+		token.WaitTimeout(2 * time.Second)
+	}
+}
 
 func GetCabinetStatus(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{
@@ -19,6 +31,7 @@ func GetCabinetStatus(c *fiber.Ctx) error {
 
 func OpenMotor(c *fiber.Ctx) error {
 	hardware.Shared.SetOpen()
+	publishMotor("open")
 	return c.JSON(fiber.Map{
 		"message":      "เปิดรับหนังสือแล้ว",
 		"motor_status": hardware.Shared.MotorStatus,
@@ -27,6 +40,7 @@ func OpenMotor(c *fiber.Ctx) error {
 
 func CloseMotor(c *fiber.Ctx) error {
 	hardware.Shared.SetClosed()
+	publishMotor("close")
 	return c.JSON(fiber.Map{
 		"message":      "ปิดตู้แล้ว",
 		"motor_status": hardware.Shared.MotorStatus,
@@ -35,6 +49,7 @@ func CloseMotor(c *fiber.Ctx) error {
 
 func DumpMotor(c *fiber.Ctx) error {
 	hardware.Shared.SetDump()
+	publishMotor("dump")
 	return c.JSON(fiber.Map{
 		"message":      "เทหนังสือลงเก็บแล้ว",
 		"motor_status": hardware.Shared.MotorStatus,
