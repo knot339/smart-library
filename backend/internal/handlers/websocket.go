@@ -37,6 +37,21 @@ func InitMQTT() {
 
 	opts.OnConnect = func(c mqtt.Client) {
 		log.Println("✅ Connected to MQTT Broker")
+		
+		// Subscribe to receive RFID and Barcode from ESP32
+		c.Subscribe("smartlibrary/esp32/rfid", 0, func(client mqtt.Client, msg mqtt.Message) {
+			log.Printf("📡 Received from ESP32: %s", msg.Payload())
+			
+			// Forward to all connected tablets via WebSocket
+			clientMu.Lock()
+			defer clientMu.Unlock()
+			for wsClient := range tabletClients {
+				if err := wsClient.WriteMessage(1, msg.Payload()); err != nil {
+					wsClient.Close()
+					delete(tabletClients, wsClient)
+				}
+			}
+		})
 	}
 	opts.OnConnectionLost = func(c mqtt.Client, err error) {
 		log.Printf("❌ MQTT Connection Lost: %v", err)
