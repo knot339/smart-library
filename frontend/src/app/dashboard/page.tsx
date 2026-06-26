@@ -31,7 +31,6 @@ const MOTOR_CONFIG: Record<MotorStatus, {
 };
 
 export default function DashboardPage() {
-    const [capacity, setCapacity] = useState(0);
     const [isFull, setIsFull] = useState(false);
     const [motorStatus, setMotorStatus] = useState<MotorStatus>("closed");
     const [cabinetOnline, setCabinetOnline] = useState(false);
@@ -59,7 +58,6 @@ export default function DashboardPage() {
         try {
             const res = await fetch(`${API}/dashboard/cabinet`);
             const data = await res.json();
-            setCapacity(data.capacity);
             setIsFull(data.is_full);
             setMotorStatus(data.motor_status as MotorStatus);
             setCabinetOnline(true);
@@ -96,8 +94,7 @@ export default function DashboardPage() {
     const fmtDate = (d: string) =>
         d ? new Date(d).toLocaleString("th-TH", { dateStyle: "short", timeStyle: "short" }) : "-";
 
-    const capColor = capacity >= 100 ? "bg-red-500" : capacity >= 70 ? "bg-yellow-400" : "bg-green-500";
-    const capText = capacity >= 100 ? "text-red-600" : capacity >= 70 ? "text-yellow-600" : "text-green-600";
+
     const motor = MOTOR_CONFIG[motorStatus];
 
     const handleResetCabinet = async () => {
@@ -105,7 +102,6 @@ export default function DashboardPage() {
             const res = await fetch(`${API}/dashboard/cabinet/reset`, { method: "POST" });
             const data = await res.json();
             setMotorStatus(data.motor_status as MotorStatus);
-            setCapacity(0);
             setBooksInCabinet([]);
             notify("✅ " + data.message);
         } catch { notify("เกิดข้อผิดพลาด", "error"); }

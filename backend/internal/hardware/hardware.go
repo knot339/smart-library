@@ -3,14 +3,13 @@ package hardware
 import "fmt"
 
 type MockHardware struct {
-	Capacity    int
 	MotorStatus string
 	MotorLogs   []string
 	IsFull      bool
 }
 
 func NewMockHardware() *MockHardware {
-	return &MockHardware{Capacity: 0, MotorStatus: "closed", MotorLogs: []string{}, IsFull: false}
+	return &MockHardware{MotorStatus: "closed", MotorLogs: []string{}, IsFull: false}
 }
 
 var Shared *MockHardware
@@ -53,12 +52,13 @@ func (m *MockHardware) CloseMotor() string {
 	return m.SetClosed()
 }
 
-func (m *MockHardware) AddBook() int {
-	if m.Capacity < 100 {
-		m.Capacity += 10
+func (m *MockHardware) AddBook() {
+	status := "ไม่เต็ม"
+	if m.IsFull {
+		status = "เต็ม"
 	}
-	m.addLog(fmt.Sprintf("📦 รับหนังสือเข้าตู้ — ความจุ %d%%", m.Capacity))
-	return m.Capacity
+	
+	m.addLog(fmt.Sprintf("📦 รับหนังสือเข้าตู้ — สถานะ: %s", status))
 }
 
 func (m *MockHardware) SetFull(full bool) {

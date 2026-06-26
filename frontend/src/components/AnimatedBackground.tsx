@@ -48,13 +48,16 @@ const AnimatedBackground = () => {
       `}</style>
 
       <defs>
-        <image id="bgImage" href="/images/svgBackground.svg" width="1200" height="800" />
+        <image id="bgImage" href="/images/svgBackground.png" width="1200" height="800" />
       </defs>
 
       {/* ชั้นที่ 1: สีพื้นหลังหลัก (Background Layer) */}
       <rect width="1200" height="800" fill="#FEFEFE" />
 
-      {/* ชั้นที่ 2: เกลียวคลื่น (อยู่ด้านหลังภาพประกอบหลัก) */}
+      {/* ชั้นที่ 2: ภาพประกอบตัวละครและฉากหลัก (ย้ายมาไว้หลังสุด) */}
+      <use href="#bgImage" x="0" y="0" width="1200" height="800" transform="translate(600, 400) scale(1.1) translate(-600, -400)" />
+
+      {/* ชั้นที่ 3: เกลียวคลื่น (อยู่ด้านหน้าภาพประกอบหลัก) */}
       <g className="sv-waves-vertical-left">
         {/* คลื่นชั้นที่ 1 (ด้านหลังสุด) */}
         <path className="wave-layer" d="M -50,-100 L 140,-100 Q 180,-25 140,50 T 140,200 T 140,350 T 140,500 T 140,650 T 140,800 T 140,950 T 140,1100 T 140,1250 T 140,1400 L -50,1400 Z" fill="#bae6fd" opacity="0.8" />
@@ -80,8 +83,6 @@ const AnimatedBackground = () => {
         {/* คลื่นฝั่งขวา: ชั้นที่ 5 (ด้านหน้าสุด) */}
         <path className="wave-layer" d="M 1250,-100 L 1180,-100 Q 1140,-25 1180,50 T 1180,200 T 1180,350 T 1180,500 T 1180,650 T 1180,800 T 1180,950 T 1180,1100 T 1180,1250 T 1180,1400 L 1250,1400 Z" fill="#1e40af" />
       </g>
-      {/* ชั้นที่ 3: ภาพประกอบตัวละครและฉากหลัก */}
-      <use href="#bgImage" x="0" y="0" width="1200" height="800" />
 
       {/* ชั้นที่ 4: ส่วนตกแต่งเพิ่มเติม (Data Nodes และ แสงระยิบระยับ) ทับด้านบนสุด */}
       <g className="sv-fa">

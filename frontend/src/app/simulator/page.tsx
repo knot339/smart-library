@@ -3,7 +3,6 @@ import { useState, useEffect } from "react";
 import { API_BASE_URL as API } from "../../lib/config";
 
 export default function SimulatorPage() {
-  const [capacity, setCapacity] = useState(0);
   const [isFull, setIsFull] = useState(false);
   const [log, setLog] = useState<string[]>([]);
   const [motorLogs, setMotorLogs] = useState<string[]>([]);
@@ -18,7 +17,6 @@ export default function SimulatorPage() {
       try {
         const res = await fetch(`${API}/status`);
         const data = await res.json();
-        setCapacity(data.capacity);
         setIsFull(data.is_full);
         setMotorLogs(data.motor_logs || []); // ดึงข้อมูลประวัติการทำงาน (log) ของมอเตอร์จาก Backend
       } catch (err) {
@@ -59,7 +57,6 @@ export default function SimulatorPage() {
 
   const handleReset = async () => {
     await fetch(`${API}/simulate/reset`, { method: "POST" });
-    setCapacity(0);
     setIsFull(false);
     addLog("🔄 รีเซ็ตตู้แล้ว");
   };
@@ -79,11 +76,7 @@ export default function SimulatorPage() {
     }
   };
 
-  const getBarColor = () => {
-    if (capacity >= 100) return "bg-red-500";
-    if (capacity >= 70) return "bg-yellow-400";
-    return "bg-green-500";
-  };
+
 
   // นำประวัติการทำงาน (Log) ทั้งสองแหล่งมารวมและเรียงตามลำดับเวลา โดยนำประวัติจาก Frontend ไว้ด้านบน
   const allLogs = [...log, ...[...motorLogs].reverse()];

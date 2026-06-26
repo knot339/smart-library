@@ -22,7 +22,6 @@ func publishMotor(status string) {
 
 func GetCabinetStatus(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{
-		"capacity":     hardware.Shared.Capacity,
 		"is_full":      hardware.Shared.IsFull,
 		"motor_status": hardware.Shared.MotorStatus,
 		"status":       "online",
@@ -111,7 +110,6 @@ func GetRecentReturns(c *fiber.Ctx) error {
 }
 
 func ResetCabinet(c *fiber.Ctx) error {
-	hardware.Shared.Capacity = 0
 	hardware.Shared.SetClosed()
 
 	database.DB.Model(&models.BorrowRecord{}).
