@@ -9,3 +9,6 @@ backend/main
 # ไฟล์แวดล้อมและอื่นๆ
 .env
 .DS_Store
+
+# PlatformIO
+.pio/
