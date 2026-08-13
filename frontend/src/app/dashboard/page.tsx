@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
-import { API_BASE_URL as API } from "../../lib/config";
+import AviMjpegPlayer from "../../components/AviMjpegPlayer";
+import { API_BASE_URL as API, CAMERA_FRONT_URL, CAMERA_INSIDE_URL, CAMERA_FRONT_RECORDINGS_URL, CAMERA_INSIDE_RECORDINGS_URL, CAMERA_FRONT_FILE_URL, CAMERA_INSIDE_FILE_URL } from "../../lib/config";
 
 type MotorStatus = "closed" | "open" | "dump";
 type BookInCabinet = {
@@ -31,6 +32,12 @@ const MOTOR_CONFIG: Record<MotorStatus, {
 };
 
 export default function DashboardPage() {
+    const [activeCamera, setActiveCamera] = useState<"front" | "inside">("front");
+    const [cameraTab, setCameraTab] = useState<"live" | "history">("live");
+    const [confirmHistoryTab, setConfirmHistoryTab] = useState(false);
+    const [recordings, setRecordings] = useState<{name: string, size: number, active: boolean}[]>([]);
+    const [loadingRecordings, setLoadingRecordings] = useState(false);
+    const [playingVideo, setPlayingVideo] = useState<string | null>(null);
     const [isFull, setIsFull] = useState(false);
     const [motorStatus, setMotorStatus] = useState<MotorStatus>("closed");
     const [cabinetOnline, setCabinetOnline] = useState(false);
@@ -79,6 +86,30 @@ export default function DashboardPage() {
         }, 5000);
         return () => clearInterval(t);
     }, [fetchCabinet, fetchBooks]);
+
+    const fetchRecordings = useCallback(async (camera: "front" | "inside") => {
+        setLoadingRecordings(true);
+        const baseUrl = camera === "front" ? CAMERA_FRONT_RECORDINGS_URL : CAMERA_INSIDE_RECORDINGS_URL;
+        try {
+            const res = await fetch(`${baseUrl}/recordings`);
+            if (res.ok) {
+                const data = await res.json();
+                const sorted = (data.files || []).sort((a: any, b: any) => b.name.localeCompare(a.name));
+                setRecordings(sorted);
+            } else {
+                setRecordings([]);
+            }
+        } catch {
+            setRecordings([]);
+        }
+        setLoadingRecordings(false);
+    }, []);
+
+    useEffect(() => {
+        if (cameraTab === "history") {
+            fetchRecordings(activeCamera);
+        }
+    }, [cameraTab, activeCamera, fetchRecordings]);
 
     const sendMotorCommand = async (cmd: "open" | "close" | "dump") => {
         setLoadingMotor(cmd);
@@ -259,6 +290,151 @@ export default function DashboardPage() {
                     </div>
                 </div>
 
+                {/* ส่วนการแสดงภาพจากกล้องวงจรปิด */}
+                <div className="bg-white rounded-xl shadow p-6 mb-6">
+                    <div className="flex flex-col md:flex-row items-center justify-between mb-4 gap-4">
+                        <div className="flex items-center gap-4">
+                            <h2 className="text-lg font-bold text-gray-700">📷 กล้องวงจรปิดตู้รับคืน</h2>
+                            <div className="flex bg-gray-100 p-1 rounded-lg">
+                                <button 
+                                    onClick={() => setCameraTab("live")}
+                                    className={`px-3 py-1.5 rounded-md text-sm font-semibold transition ${cameraTab === "live" ? "bg-white shadow text-blue-700" : "text-gray-500 hover:text-gray-700"}`}
+                                >
+                                    🔴 สด (Live)
+                                </button>
+                                <button 
+                                    onClick={() => setConfirmHistoryTab(true)}
+                                    className={`px-3 py-1.5 rounded-md text-sm font-semibold transition ${cameraTab === "history" ? "bg-white shadow text-blue-700" : "text-gray-500 hover:text-gray-700"}`}
+                                >
+                                    📼 ย้อนหลัง
+                                </button>
+                            </div>
+                        </div>
+                        <div className="flex bg-gray-100 p-1 rounded-lg">
+                            <button 
+                                onClick={() => setActiveCamera("front")}
+                                className={`px-4 py-2 rounded-md text-sm font-semibold transition ${activeCamera === "front" ? "bg-white shadow text-blue-700" : "text-gray-500 hover:text-gray-700"}`}
+                            >
+                                หน้าตู้
+                            </button>
+                            <button 
+                                onClick={() => setActiveCamera("inside")}
+                                className={`px-4 py-2 rounded-md text-sm font-semibold transition ${activeCamera === "inside" ? "bg-white shadow text-blue-700" : "text-gray-500 hover:text-gray-700"}`}
+                            >
+                                ในตู้
+                            </button>
+                        </div>
+                    </div>
+                    
+                    {cameraTab === "live" ? (
+                        <div className="bg-black rounded-xl overflow-hidden aspect-video flex items-center justify-center relative w-full">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img 
+                                src={activeCamera === "front" ? CAMERA_FRONT_URL : CAMERA_INSIDE_URL} 
+                                alt={`Camera ${activeCamera}`}
+                                className="w-full h-full object-contain"
+                                onError={(e) => {
+                                    (e.target as HTMLImageElement).src = `https://placehold.co/600x400?text=Camera+Offline`;
+                                }}
+                            />
+                            <div className="absolute top-4 left-4 bg-black/50 text-white px-3 py-1 rounded-md text-xs backdrop-blur-sm shadow">
+                                🔴 LIVE: {activeCamera === "front" ? "กล้องหน้าตู้" : "กล้องในตู้"}
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="border border-gray-200 rounded-xl overflow-hidden h-[450px] flex flex-col">
+                            <div className="bg-gray-50 px-4 py-3 flex justify-between items-center border-b border-gray-200">
+                                <h3 className="font-semibold text-gray-700 flex items-center gap-2">
+                                    📼 ประวัติวิดีโอ - {activeCamera === "front" ? "กล้องหน้าตู้" : "กล้องในตู้"}
+                                </h3>
+                                <button 
+                                    onClick={() => fetchRecordings(activeCamera)}
+                                    disabled={loadingRecordings}
+                                    className="text-blue-600 hover:text-blue-800 text-sm font-medium flex items-center gap-1 disabled:opacity-50 bg-white border border-blue-200 px-3 py-1.5 rounded-lg shadow-sm"
+                                >
+                                    {loadingRecordings ? "⏳ กำลังโหลด..." : "🔄 รีเฟรชรายการ"}
+                                </button>
+                            </div>
+                            <div className="bg-yellow-50 border-b border-yellow-200 px-4 py-2 text-xs text-yellow-800 flex items-center gap-2">
+                                <span className="text-lg">⚠️</span> 
+                                <span><strong>คำเตือน:</strong> การเปิดดู/รีเฟรชรายการนี้ หรือการเล่นวิดีโอ จะทำให้กล้องหยุดบันทึกช่วงเวลานั้นชั่วคราว</span>
+                            </div>
+                            <div className="flex-1 overflow-y-auto p-0 relative">
+                                {recordings.length === 0 ? (
+                                    <div className="h-full flex flex-col items-center justify-center text-gray-400">
+                                        <div className="text-4xl mb-3">📁</div>
+                                        <p>{loadingRecordings ? "กำลังโหลดประวัติวิดีโอ..." : "ไม่พบไฟล์วิดีโอย้อนหลัง หรือกล้องอาจออฟไลน์"}</p>
+                                    </div>
+                                ) : (
+                                    <table className="w-full text-sm">
+                                        <thead className="bg-white sticky top-0 border-b shadow-sm z-10">
+                                            <tr className="text-gray-600">
+                                                <th className="px-4 py-3 text-left font-semibold">เวลาบันทึก</th>
+                                                <th className="px-4 py-3 text-left font-semibold">ขนาดไฟล์</th>
+                                                <th className="px-4 py-3 text-left font-semibold">สถานะ</th>
+                                                <th className="px-4 py-3 text-right font-semibold">ดาวน์โหลด / เปิด</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {recordings.map((rec) => {
+                                                const match = rec.name.match(/^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})\.avi$/);
+                                                let displayTime = rec.name;
+                                                if (match) {
+                                                    const [_, y, m, d, H, M, S] = match;
+                                                    displayTime = `${d}/${m}/${y} ${H}:${M}:${S}`;
+                                                }
+                                                const fileBaseUrl = activeCamera === "front" ? CAMERA_FRONT_FILE_URL : CAMERA_INSIDE_FILE_URL;
+                                                const fileUrl = `${fileBaseUrl}/recordings/file?file=${rec.name}`;
+
+                                                return (
+                                                    <tr key={rec.name} className="border-b last:border-0 hover:bg-blue-50/50 transition">
+                                                        <td className="px-4 py-3 font-mono font-medium text-gray-700">{displayTime}</td>
+                                                        <td className="px-4 py-3 text-gray-500">{(rec.size / (1024 * 1024)).toFixed(2)} MB</td>
+                                                        <td className="px-4 py-3">
+                                                            {rec.active ? (
+                                                                <span className="bg-red-100 text-red-700 px-2 py-1 rounded text-xs font-bold animate-pulse inline-flex items-center gap-1">
+                                                                    <span className="w-2 h-2 bg-red-600 rounded-full"></span> กำลังบันทึก
+                                                                </span>
+                                                            ) : (
+                                                                <span className="bg-gray-100 text-gray-600 px-2 py-1 rounded text-xs font-medium">
+                                                                    บันทึกเสร็จสิ้น
+                                                                </span>
+                                                            )}
+                                                        </td>
+                                                        <td className="px-4 py-3 text-right">
+                                                            {rec.active ? (
+                                                                <span className="text-gray-400 text-xs italic">ยังไม่สมบูรณ์</span>
+                                                            ) : (
+                                                                <div className="flex justify-end gap-2">
+                                                                    <button 
+                                                                        onClick={() => setPlayingVideo(fileUrl)}
+                                                                        className="bg-blue-100 hover:bg-blue-200 text-blue-700 px-3 py-1.5 rounded-lg text-xs font-semibold transition inline-flex items-center gap-1"
+                                                                    >
+                                                                        ▶️ เล่นวิดีโอ
+                                                                    </button>
+                                                                    <a 
+                                                                        href={fileUrl}
+                                                                        target="_blank"
+                                                                        rel="noopener noreferrer"
+                                                                        className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-xs font-semibold transition inline-flex items-center gap-1"
+                                                                        title="ดาวน์โหลด (สำรองสำหรับเปิดใน VLC)"
+                                                                    >
+                                                                        ⬇️
+                                                                    </a>
+                                                                </div>
+                                                            )}
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
+                                        </tbody>
+                                    </table>
+                                )}
+                            </div>
+                        </div>
+                    )}
+                </div>
+
                 {/* ส่วนการแสดงผลข้อมูลรายการในตู้ */}
                 <div className="bg-white rounded-xl shadow overflow-hidden">
                     <div className="bg-blue-50 px-6 py-4 border-b text-blue-900 font-bold">
@@ -317,6 +493,47 @@ export default function DashboardPage() {
                                 ยกเลิก
                             </button>
                         </div>
+                    </div>
+                </div>
+            )}
+
+            {/* หน้าต่างยืนยันการเข้าสู่โหมดย้อนหลัง */}
+            {confirmHistoryTab && (
+                <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-8 text-center">
+                        <div className="text-5xl mb-4">⚠️</div>
+                        <h3 className="text-xl font-bold text-gray-800 mb-2">ยืนยันเปิดดูประวัติ?</h3>
+                        <p className="text-gray-500 text-sm mb-6">
+                            การเข้าสู่โหมดย้อนหลังจะทำการ<span className="text-red-500 font-semibold">ตัดการเชื่อมต่อกล้องสด</span><br />
+                            และอาจทำให้กล้องหยุดบันทึกวิดีโอชั่วคราวขณะโหลดข้อมูล
+                        </p>
+                        <div className="flex gap-3">
+                            <button
+                                onClick={() => {
+                                    setCameraTab("history");
+                                    setConfirmHistoryTab(false);
+                                }}
+                                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl transition"
+                            >
+                                ตกลง
+                            </button>
+                            <button
+                                onClick={() => setConfirmHistoryTab(false)}
+                                className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-3 rounded-xl transition"
+                            >
+                                ยกเลิก
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* หน้าต่างเล่นวิดีโอ */}
+
+            {playingVideo && (
+                <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[60] p-4 backdrop-blur-sm">
+                    <div className="w-full max-w-4xl max-h-full">
+                        <AviMjpegPlayer src={playingVideo} onClose={() => setPlayingVideo(null)} />
                     </div>
                 </div>
             )}
