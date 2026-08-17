@@ -21,7 +21,11 @@ static const char* _STREAM_CONTENT_TYPE = "multipart/x-mixed-replace;boundary=" 
 static const char* _STREAM_BOUNDARY = "\r\n--" PART_BOUNDARY "\r\n";
 static const char* _STREAM_PART = "Content-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n";
 
-// กำหนดพินสำหรับ AI-Thinker ESP32-CAM
+// จำนวนคนดูสตรีมสดพร้อมกันสูงสุด (เกินนี้จะถูกตอบ 503 ปฏิเสธ)
+// ยิ่งมากยิ่งกิน RAM/แบนด์วิดท์ WiFi ต่อเฟรม - ปรับตามความจำเป็นจริง
+#define MAX_STREAM_CLIENTS 3
+
+// ---------- Pin mapping: AI-Thinker ESP32-CAM ----------
 #define PWDN_GPIO_NUM     32
 #define RESET_GPIO_NUM    -1
 #define XCLK_GPIO_NUM      0
@@ -50,13 +54,12 @@ const char* ntpServer = "pool.ntp.org";
 const long  gmtOffsetSec = 7 * 3600;   // Thailand UTC+7
 const int   daylightOffsetSec = 0;
 
-httpd_handle_t stream_httpd = NULL;
 httpd_handle_t recordings_httpd = NULL;
 httpd_handle_t file_httpd = NULL;
 bool sdReady = false;
 
-// กันไม่ให้ recordTask (เขียน SD) กับ HTTP handler (อ่าน SD) แย่งการ์ดกันพร้อมกัน
-// เพราะการ์ด SD ราคาถูก/ความจุสูงมากมักค้างทั้งระบบถ้าโดนอ่าน-เขียนพร้อมกันหนักๆ
+// ป้องกัน recordTask (เขียน SD) กับ HTTP handler (อ่าน SD) แย่งการ์ดกันพร้อมกัน
+// การ์ด SD ราคาถูก/ความจุสูงมักค้างทั้งระบบถ้าถูกอ่าน-เขียนพร้อมกันหนัก ๆ
 SemaphoreHandle_t sdMutex = NULL;
 
 // ================= AVI (Motion-JPEG) writer =================
@@ -273,9 +276,9 @@ void aviFinalize(AviRecorder &rec) {
 
 // ================= SD loop-recording housekeeping =================
 
-// ลบไฟล์ .avi ค้างที่ขนาด 0 ไบต์ทิ้ง (ซากจากตอนบอร์ด crash/reboot กลางคันตอนกำลังเขียนไฟล์
-// เพราะ FAT จะโชว์ขนาดไฟล์เป็น 0 ค้างไว้ตลอดถ้าไฟล์ไม่เคยถูก close() สำเร็จ) เรียกตอนบูตเท่านั้น
-// เพราะตอนนั้นยังไม่มีไฟล์ไหนกำลังถูกบันทึกอยู่ (recordTask ยังไม่เริ่ม) ปลอดภัยสุด
+// ลบไฟล์ .avi ค้างขนาด 0 ไบต์ทิ้ง (ซากจากบอร์ด crash/reboot กลางคันขณะเขียนไฟล์ - FAT จะ
+// โชว์ขนาด 0 ค้างไว้ตลอดถ้าไฟล์ไม่เคยถูก close() สำเร็จ)
+// เรียกตอนบูตเท่านั้น เพราะยังไม่มี recordTask เขียนไฟล์อยู่ จึงปลอดภัยที่จะลบ
 void cleanupZeroByteRecordings() {
   std::vector<String> toDelete;
   File dir = SD_MMC.open(RECORD_DIR);
@@ -333,6 +336,97 @@ void ensureFreeSpace() {
   }
 }
 
+// ================= Shared latest-frame cache =================
+// captureTask เป็นตัวเดียวที่เรียก esp_camera_fb_get() แล้วแคชเฟรม JPEG ล่าสุดไว้ที่นี่
+// เหตุผล: ถ้าปล่อยให้ recordTask และ stream client หลายตัวเรียก esp_camera_fb_get()
+// ตรง ๆ พร้อมกัน แต่ละ task จะแย่งคิวกล้องกัน ได้รับเฟรมสลับกันไปคนละใบ ทำให้เฟรมเรต
+// ของทุกฝ่ายลดลงและจังหวะไม่แน่นอน จึงให้ recordTask และ stream client ทุกตัวอ่านจาก
+// cache นี้แทน โดยเทียบ version เพื่อรู้ว่ามีเฟรมใหม่เข้ามาหรือยัง
+struct SharedFrame {
+  SemaphoreHandle_t mutex = NULL;
+  uint8_t *buf = nullptr;
+  size_t len = 0;
+  size_t capacity = 0;
+  uint32_t version = 0;
+  uint16_t width = 0, height = 0;
+};
+SharedFrame gFrame;
+
+volatile int gStreamClientCount = 0;
+SemaphoreHandle_t gStreamCountMutex = NULL;
+
+TaskHandle_t captureTaskHandle = NULL;
+
+void captureTask(void *pvParameters) {
+  for (;;) {
+    camera_fb_t *fb = esp_camera_fb_get();
+    if (!fb) {
+      vTaskDelay(pdMS_TO_TICKS(10));
+      continue;
+    }
+
+    uint8_t *jbuf = fb->buf;
+    size_t jlen = fb->len;
+    bool needFree = false;
+    if (fb->format != PIXFORMAT_JPEG) {
+      uint8_t *tmp = NULL;
+      size_t tlen = 0;
+      if (frame2jpg(fb, 80, &tmp, &tlen)) {
+        jbuf = tmp;
+        jlen = tlen;
+        needFree = true;
+      } else {
+        esp_camera_fb_return(fb);
+        continue;
+      }
+    }
+
+    xSemaphoreTake(gFrame.mutex, portMAX_DELAY);
+    if (gFrame.capacity < jlen) {
+      uint8_t *nb = (uint8_t *)realloc(gFrame.buf, jlen);
+      if (nb) {
+        gFrame.buf = nb;
+        gFrame.capacity = jlen;
+      }
+    }
+    if (gFrame.buf && gFrame.capacity >= jlen) {
+      memcpy(gFrame.buf, jbuf, jlen);
+      gFrame.len = jlen;
+      gFrame.width = fb->width;
+      gFrame.height = fb->height;
+      gFrame.version++;
+    }
+    xSemaphoreGive(gFrame.mutex);
+
+    if (needFree) free(jbuf);
+    esp_camera_fb_return(fb);
+  }
+}
+
+// คัดลอกเฟรมล่าสุดออกจาก cache ใส่ buffer ปลายทาง (โต growable ตามต้องการ) ถ้ามีเฟรมใหม่กว่า lastVersion
+// คืนค่า true เมื่อคัดลอกเฟรมใหม่มาให้ (แล้วอัปเดต lastVersion / outBuf / outCap / outLen ให้เอง)
+bool copyLatestFrameIfNewer(uint32_t &lastVersion, uint8_t *&outBuf, size_t &outCap, size_t &outLen) {
+  bool gotNew = false;
+  xSemaphoreTake(gFrame.mutex, portMAX_DELAY);
+  if (gFrame.version != lastVersion && gFrame.buf && gFrame.len > 0) {
+    if (outCap < gFrame.len) {
+      uint8_t *nb = (uint8_t *)realloc(outBuf, gFrame.len);
+      if (nb) {
+        outBuf = nb;
+        outCap = gFrame.len;
+      }
+    }
+    if (outBuf && outCap >= gFrame.len) {
+      memcpy(outBuf, gFrame.buf, gFrame.len);
+      outLen = gFrame.len;
+      lastVersion = gFrame.version;
+      gotNew = true;
+    }
+  }
+  xSemaphoreGive(gFrame.mutex);
+  return gotNew;
+}
+
 // ================= Recording task =================
 
 TaskHandle_t recordTaskHandle = NULL;
@@ -340,6 +434,11 @@ TaskHandle_t recordTaskHandle = NULL;
 void recordTask(void *pvParameters) {
   const TickType_t period = pdMS_TO_TICKS(RECORD_INTERVAL_MS);
   TickType_t lastWake = xTaskGetTickCount();
+
+  static uint8_t *recBuf = NULL;
+  static size_t recBufCap = 0;
+  static size_t recBufLen = 0;
+  uint32_t lastVersion = 0;
 
   for (;;) {
     if (!sdReady) {
@@ -351,10 +450,13 @@ void recordTask(void *pvParameters) {
     if (!recorder.active) {
       xSemaphoreTake(sdMutex, portMAX_DELAY);
       ensureFreeSpace();
-      camera_fb_t *fb0 = esp_camera_fb_get();
-      uint16_t w = fb0 ? fb0->width : 640;
-      uint16_t h = fb0 ? fb0->height : 480;
-      if (fb0) esp_camera_fb_return(fb0);
+      uint16_t w = 640, h = 480;
+      xSemaphoreTake(gFrame.mutex, portMAX_DELAY);
+      if (gFrame.width && gFrame.height) {
+        w = gFrame.width;
+        h = gFrame.height;
+      }
+      xSemaphoreGive(gFrame.mutex);
       bool started = aviBegin(recorder, w, h);
       xSemaphoreGive(sdMutex);
       if (!started) {
@@ -365,21 +467,10 @@ void recordTask(void *pvParameters) {
       }
     }
 
-    camera_fb_t *fb = esp_camera_fb_get();
-    if (fb) {
+    if (copyLatestFrameIfNewer(lastVersion, recBuf, recBufCap, recBufLen)) {
       xSemaphoreTake(sdMutex, portMAX_DELAY);
-      if (fb->format == PIXFORMAT_JPEG) {
-        aviAppendFrame(recorder, fb->buf, fb->len);
-      } else {
-        uint8_t *jbuf = NULL;
-        size_t jlen = 0;
-        if (frame2jpg(fb, 80, &jbuf, &jlen)) {
-          aviAppendFrame(recorder, jbuf, jlen);
-          free(jbuf);
-        }
-      }
+      aviAppendFrame(recorder, recBuf, recBufLen);
       xSemaphoreGive(sdMutex);
-      esp_camera_fb_return(fb);
     }
 
     if (recorder.active && (millis() - recorder.startMillis) >= SEGMENT_SECONDS * 1000UL) {
@@ -394,62 +485,118 @@ void recordTask(void *pvParameters) {
 
 // ================= HTTP handlers =================
 
-static esp_err_t stream_handler(httpd_req_t *req) {
-  camera_fb_t * fb = NULL;
-  esp_err_t res = ESP_OK;
-  size_t _jpg_buf_len = 0;
-  uint8_t * _jpg_buf = NULL;
-  char * part_buf[64];
+// ---- /stream (พอร์ต 81) ----
+// ทำไมไม่ใช้ esp_http_server เหมือน /recordings และ /recordings/file:
+// httpd instance หนึ่งมี worker task ประมวลผล request ได้ทีละตัวเท่านั้น handler ที่ค้าง
+// connection ไว้ตลอด (เช่นสตรีม MJPEG ที่ส่งเฟรมไม่มีวันจบ) จะยึด task นั้นไว้ทั้งหมด
+// ทำให้เครื่องที่สองต่อ TCP ติดแต่ไม่มี worker ว่างมาให้บริการ - ดูได้ทีละเครื่องเท่านั้น
+//
+// จึงเลี่ยง httpd แล้วเปิด WiFiServer เอง โดยแตก FreeRTOS task ใหม่ให้ทุก client ที่ต่อ
+// เข้ามา (จำกัดไว้ที่ MAX_STREAM_CLIENTS ตัว) แต่ละ task อ่านเฟรมล่าสุดจาก gFrame cache
+// ที่ captureTask เติมให้ เป็นอิสระจากกัน จึงดูพร้อมกันได้จริง
+WiFiServer streamServer(81, MAX_STREAM_CLIENTS + 1);
 
-  res = httpd_resp_set_type(req, _STREAM_CONTENT_TYPE);
-  if (res != ESP_OK) {
-    return res;
+void streamClientTask(void *pvParameters) {
+  WiFiClient client = *(WiFiClient *)pvParameters;
+  delete (WiFiClient *)pvParameters;
+
+  client.print("HTTP/1.1 200 OK\r\n");
+  client.print(String("Content-Type: ") + _STREAM_CONTENT_TYPE + "\r\n");
+  client.print("Access-Control-Allow-Origin: *\r\n");
+  client.print("Connection: close\r\n\r\n");
+
+  uint32_t lastVersion = 0;
+  uint8_t *buf = NULL;
+  size_t cap = 0, len = 0;
+  char partBuf[64];
+
+  while (client.connected()) {
+    if (copyLatestFrameIfNewer(lastVersion, buf, cap, len)) {
+      size_t hlen = snprintf(partBuf, sizeof(partBuf), _STREAM_PART, (unsigned)len);
+      if (client.write((const uint8_t *)partBuf, hlen) != hlen) break;
+      if (client.write(buf, len) != len) break;
+      size_t blen = strlen(_STREAM_BOUNDARY);
+      if (client.write((const uint8_t *)_STREAM_BOUNDARY, blen) != blen) break;
+    } else {
+      vTaskDelay(pdMS_TO_TICKS(15));
+    }
   }
 
-  while (true) {
-    fb = esp_camera_fb_get();
-    if (!fb) {
-      Serial.println("Camera capture failed");
-      res = ESP_FAIL;
-    } else {
-      if (fb->width > 400) {
-        if (fb->format != PIXFORMAT_JPEG) {
-          bool jpeg_converted = frame2jpg(fb, 80, &_jpg_buf, &_jpg_buf_len);
-          esp_camera_fb_return(fb);
-          fb = NULL;
-          if (!jpeg_converted) {
-            Serial.println("JPEG compression failed");
-            res = ESP_FAIL;
-          }
-        } else {
-          _jpg_buf_len = fb->len;
-          _jpg_buf = fb->buf;
-        }
+  free(buf);
+  client.stop();
+  xSemaphoreTake(gStreamCountMutex, portMAX_DELAY);
+  gStreamClientCount--;
+  xSemaphoreGive(gStreamCountMutex);
+  vTaskDelete(NULL);
+}
+
+void streamListenerTask(void *pvParameters) {
+  streamServer.begin();
+  streamServer.setNoDelay(true);
+
+  for (;;) {
+    WiFiClient client = streamServer.available();
+    if (!client) {
+      vTaskDelay(pdMS_TO_TICKS(50));
+      continue;
+    }
+
+    // อ่านบรรทัดแรกของ request แค่พอเช็คว่าเป็น "GET /stream" แล้วระบาย header ที่เหลือทิ้ง
+    // พอร์ตนี้ให้บริการแค่สตรีมอย่างเดียว จึงไม่จำเป็นต้อง parse header ให้ครบ
+    char reqLine[16] = {0};
+    size_t n = 0;
+    unsigned long t0 = millis();
+    while (millis() - t0 < 1000 && n < sizeof(reqLine) - 1) {
+      if (client.available()) {
+        reqLine[n++] = client.read();
+      } else if (!client.connected()) {
+        break;
+      } else {
+        delay(1);
       }
     }
-    if (res == ESP_OK) {
-      size_t hlen = snprintf((char *)part_buf, 64, _STREAM_PART, _jpg_buf_len);
-      res = httpd_resp_send_chunk(req, (const char *)part_buf, hlen);
+    unsigned long t1 = millis();
+    while (millis() - t1 < 300) {
+      if (client.available()) {
+        client.read();
+        t1 = millis();
+      } else if (!client.connected()) {
+        break;
+      } else {
+        delay(1);
+      }
     }
-    if (res == ESP_OK) {
-      res = httpd_resp_send_chunk(req, (const char *)_jpg_buf, _jpg_buf_len);
+
+    if (strncmp(reqLine, "GET /stream", 11) != 0) {
+      client.print("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
+      client.stop();
+      continue;
     }
-    if (res == ESP_OK) {
-      res = httpd_resp_send_chunk(req, _STREAM_BOUNDARY, strlen(_STREAM_BOUNDARY));
+
+    xSemaphoreTake(gStreamCountMutex, portMAX_DELAY);
+    bool accept = gStreamClientCount < MAX_STREAM_CLIENTS;
+    if (accept) gStreamClientCount++;
+    xSemaphoreGive(gStreamCountMutex);
+
+    if (!accept) {
+      client.print("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n");
+      client.stop();
+      continue;
     }
-    if (fb) {
-      esp_camera_fb_return(fb);
-      fb = NULL;
-      _jpg_buf = NULL;
-    } else if (_jpg_buf) {
-      free(_jpg_buf);
-      _jpg_buf = NULL;
-    }
-    if (res != ESP_OK) {
-      break;
+
+    WiFiClient *ctx = new WiFiClient(client);
+    if (xTaskCreate(streamClientTask, "streamClient", 4096, ctx, 1, NULL) != pdPASS) {
+      delete ctx;
+      client.stop();
+      xSemaphoreTake(gStreamCountMutex, portMAX_DELAY);
+      gStreamClientCount--;
+      xSemaphoreGive(gStreamCountMutex);
     }
   }
-  return res;
+}
+
+void startStreamServer() {
+  xTaskCreate(streamListenerTask, "streamListener", 4096, NULL, 1, NULL);
 }
 
 // GET /recordings -> { files: [ { name, size, active }, ... ] }
@@ -573,28 +720,8 @@ static esp_err_t recordings_file_handler(httpd_req_t *req) {
   return res;
 }
 
-// ต้องแยก /stream ออกเป็น httpd instance ของตัวเอง เพราะ stream_handler เป็น while(true)
-// วนส่งเฟรมไม่มีวันจบตราบใดที่ยังมีคนดูสด ถ้าเอา /recordings ไปแชร์ server เดียวกัน
-// (esp_http_server ประมวลผล request ได้ทีละตัวต่อ instance) /recordings จะถูกบล็อกรอ
-// คิวจนกว่าจะไม่มีใครดูสตรีมแล้ว - จึงต้องเปิด server คนละพอร์ตแยกกันเด็ดขาด
-void startCameraServer() {
-  httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-  config.server_port = 81;
-
-  httpd_uri_t stream_uri = {
-    .uri       = "/stream",
-    .method    = HTTP_GET,
-    .handler   = stream_handler,
-    .user_ctx  = NULL
-  };
-
-  if (httpd_start(&stream_httpd, &config) == ESP_OK) {
-    httpd_register_uri_handler(stream_httpd, &stream_uri);
-  }
-}
-
-// server แยกต่างหากสำหรับ /recordings (list อย่างเดียว, พอร์ต 82)
-// ไม่ให้ถูกบล็อกโดย /stream ที่ค้าง connection ตลอดเวลาบนพอร์ต 81
+// server แยกสำหรับ /recordings (list อย่างเดียว, พอร์ต 82) กันไม่ให้ถูกบล็อกโดยสตรีมสด
+// ที่ค้าง connection ตลอดเวลาบนพอร์ต 81
 void startRecordingsServer() {
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
   config.server_port = 82;
@@ -613,9 +740,9 @@ void startRecordingsServer() {
 }
 
 // server แยกอีกตัวเฉพาะ /recordings/file (พอร์ต 83)
-// การโหลดไฟล์วิดีโอเป็น request ที่ใช้เวลานาน/ค้างได้ง่าย (ไฟล์ใหญ่, เบราว์เซอร์บางตัวพยายาม
-// preview ไฟล์ AVI ที่ตัวเองเล่นไม่ได้แล้วค้าง connection ไว้) ถ้าแชร์ instance กับ /recordings
-// จะไปบล็อก list เหมือนที่ /stream เคยบล็อกมาก่อน จึงต้องแยกพอร์ตของตัวเองเด็ดขาด
+// การโหลดไฟล์วิดีโอเป็น request ที่ใช้เวลานาน/ค้างได้ง่าย (ไฟล์ใหญ่ หรือเบราว์เซอร์บางตัว
+// พยายาม preview ไฟล์ AVI ที่เล่นไม่ได้แล้วค้าง connection ไว้) ถ้าแชร์ instance กับ
+// /recordings จะไปบล็อก list เหมือนที่สตรีมสดเคยบล็อกมาก่อน จึงต้องแยกพอร์ตเด็ดขาด
 void startFileServer() {
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
   config.server_port = 83;
@@ -641,6 +768,8 @@ void setup() {
   Serial.setDebugOutput(false);
 
   sdMutex = xSemaphoreCreateMutex();
+  gFrame.mutex = xSemaphoreCreateMutex();
+  gStreamCountMutex = xSemaphoreCreateMutex();
 
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_0;
@@ -715,9 +844,13 @@ void setup() {
   Serial.print(WiFi.localIP());
   Serial.println(":81/stream");
 
-  // Start streaming web server (พอร์ต 81) + server แยกสำหรับ list ประวัติ (พอร์ต 82)
-  // + server แยกสำหรับโหลดไฟล์วิดีโอ (พอร์ต 83) - แยกกันเด็ดขาดทั้ง 3 ตัว
-  startCameraServer();
+  // captureTask เป็นตัวเดียวที่เรียก esp_camera_fb_get() ต้องเริ่มก่อนใครเสมอ
+  // เพื่อให้ recordTask และ stream client ตัวแรกมีเฟรมใน cache ให้อ่านได้ทันที
+  xTaskCreatePinnedToCore(captureTask, "captureTask", 4096, NULL, 2, &captureTaskHandle, 1);
+
+  // เปิด server ทั้ง 3 ตัวแยกพอร์ตกันเด็ดขาด: สตรีมสด (81, WiFiServer), list ประวัติ (82),
+  // โหลดไฟล์วิดีโอ (83) - กันไม่ให้ endpoint ที่ค้าง connection นานบล็อก endpoint อื่น
+  startStreamServer();
   startRecordingsServer();
   startFileServer();
 

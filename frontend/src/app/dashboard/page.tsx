@@ -47,6 +47,8 @@ export default function DashboardPage() {
     const [time, setTime] = useState("");
     const [confirmReset, setConfirmReset] = useState(false);
 
+    const [fullScreenCamera, setFullScreenCamera] = useState<"front" | "inside" | null>(null);
+
     const notify = (text: string, type = "success") => {
         setMsg({ text, type });
         setTimeout(() => setMsg({ text: "", type: "" }), 3000);
@@ -310,35 +312,67 @@ export default function DashboardPage() {
                                 </button>
                             </div>
                         </div>
-                        <div className="flex bg-gray-100 p-1 rounded-lg">
-                            <button 
-                                onClick={() => setActiveCamera("front")}
-                                className={`px-4 py-2 rounded-md text-sm font-semibold transition ${activeCamera === "front" ? "bg-white shadow text-blue-700" : "text-gray-500 hover:text-gray-700"}`}
-                            >
-                                หน้าตู้
-                            </button>
-                            <button 
-                                onClick={() => setActiveCamera("inside")}
-                                className={`px-4 py-2 rounded-md text-sm font-semibold transition ${activeCamera === "inside" ? "bg-white shadow text-blue-700" : "text-gray-500 hover:text-gray-700"}`}
-                            >
-                                ในตู้
-                            </button>
-                        </div>
+                        {cameraTab === "history" && (
+                            <div className="flex bg-gray-100 p-1 rounded-lg">
+                                <button 
+                                    onClick={() => setActiveCamera("front")}
+                                    className={`px-4 py-2 rounded-md text-sm font-semibold transition ${activeCamera === "front" ? "bg-white shadow text-blue-700" : "text-gray-500 hover:text-gray-700"}`}
+                                >
+                                    หน้าตู้
+                                </button>
+                                <button 
+                                    onClick={() => setActiveCamera("inside")}
+                                    className={`px-4 py-2 rounded-md text-sm font-semibold transition ${activeCamera === "inside" ? "bg-white shadow text-blue-700" : "text-gray-500 hover:text-gray-700"}`}
+                                >
+                                    ในตู้
+                                </button>
+                            </div>
+                        )}
                     </div>
                     
                     {cameraTab === "live" ? (
-                        <div className="bg-black rounded-xl overflow-hidden aspect-video flex items-center justify-center relative w-full">
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img 
-                                src={activeCamera === "front" ? CAMERA_FRONT_URL : CAMERA_INSIDE_URL} 
-                                alt={`Camera ${activeCamera}`}
-                                className="w-full h-full object-contain"
-                                onError={(e) => {
-                                    (e.target as HTMLImageElement).src = `https://placehold.co/600x400?text=Camera+Offline`;
-                                }}
-                            />
-                            <div className="absolute top-4 left-4 bg-black/50 text-white px-3 py-1 rounded-md text-xs backdrop-blur-sm shadow">
-                                🔴 LIVE: {activeCamera === "front" ? "กล้องหน้าตู้" : "กล้องในตู้"}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full">
+                            <div className="bg-black rounded-xl overflow-hidden aspect-video flex items-center justify-center relative w-full group">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img 
+                                    src={CAMERA_FRONT_URL} 
+                                    alt="Camera Front"
+                                    className="w-full h-full object-contain"
+                                    onError={(e) => {
+                                        (e.target as HTMLImageElement).src = `https://placehold.co/600x400?text=Camera+Offline`;
+                                    }}
+                                />
+                                <div className="absolute top-4 left-4 bg-black/50 text-white px-3 py-1 rounded-md text-xs backdrop-blur-sm shadow">
+                                    🔴 LIVE: กล้องหน้าตู้
+                                </div>
+                                <button
+                                    onClick={() => setFullScreenCamera("front")}
+                                    className="absolute top-4 right-4 bg-black/50 hover:bg-black/80 text-white p-2 rounded-lg backdrop-blur-sm shadow transition opacity-100 md:opacity-0 md:group-hover:opacity-100"
+                                    title="เต็มจอ"
+                                >
+                                    ⛶
+                                </button>
+                            </div>
+                            <div className="bg-black rounded-xl overflow-hidden aspect-video flex items-center justify-center relative w-full group">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img 
+                                    src={CAMERA_INSIDE_URL} 
+                                    alt="Camera Inside"
+                                    className="w-full h-full object-contain"
+                                    onError={(e) => {
+                                        (e.target as HTMLImageElement).src = `https://placehold.co/600x400?text=Camera+Offline`;
+                                    }}
+                                />
+                                <div className="absolute top-4 left-4 bg-black/50 text-white px-3 py-1 rounded-md text-xs backdrop-blur-sm shadow">
+                                    🔴 LIVE: กล้องในตู้
+                                </div>
+                                <button
+                                    onClick={() => setFullScreenCamera("inside")}
+                                    className="absolute top-4 right-4 bg-black/50 hover:bg-black/80 text-white p-2 rounded-lg backdrop-blur-sm shadow transition opacity-100 md:opacity-0 md:group-hover:opacity-100"
+                                    title="เต็มจอ"
+                                >
+                                    ⛶
+                                </button>
                             </div>
                         </div>
                     ) : (
@@ -359,7 +393,7 @@ export default function DashboardPage() {
                                 <span className="text-lg">⚠️</span> 
                                 <span><strong>คำเตือน:</strong> การเปิดดู/รีเฟรชรายการนี้ หรือการเล่นวิดีโอ จะทำให้กล้องหยุดบันทึกช่วงเวลานั้นชั่วคราว</span>
                             </div>
-                            <div className="flex-1 overflow-y-auto p-0 relative">
+                            <div className="flex-1 overflow-x-auto overflow-y-auto p-0 relative">
                                 {recordings.length === 0 ? (
                                     <div className="h-full flex flex-col items-center justify-center text-gray-400">
                                         <div className="text-4xl mb-3">📁</div>
@@ -534,6 +568,30 @@ export default function DashboardPage() {
                 <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[60] p-4 backdrop-blur-sm">
                     <div className="w-full max-w-4xl max-h-full">
                         <AviMjpegPlayer src={playingVideo} onClose={() => setPlayingVideo(null)} />
+                    </div>
+                </div>
+            )}
+
+            {/* หน้าต่างดูกล้องสดเต็มจอ */}
+            {fullScreenCamera && (
+                <div className="fixed inset-0 bg-black z-[70] flex flex-col items-center justify-center p-0">
+                    <button 
+                        onClick={() => setFullScreenCamera(null)}
+                        className="absolute top-4 right-4 bg-white/20 hover:bg-white/40 text-white rounded-full w-12 h-12 flex items-center justify-center backdrop-blur-sm z-10 text-2xl transition"
+                    >
+                        ✕
+                    </button>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img 
+                        src={fullScreenCamera === "front" ? CAMERA_FRONT_URL : CAMERA_INSIDE_URL} 
+                        alt={`Camera Fullscreen ${fullScreenCamera}`}
+                        className="w-full h-full object-contain"
+                        onError={(e) => {
+                            (e.target as HTMLImageElement).src = `https://placehold.co/1280x720?text=Camera+Offline`;
+                        }}
+                    />
+                    <div className="absolute top-4 left-4 bg-black/50 text-white px-4 py-2 rounded-lg text-sm backdrop-blur-sm shadow">
+                        🔴 LIVE: {fullScreenCamera === "front" ? "กล้องหน้าตู้" : "กล้องในตู้"}
                     </div>
                 </div>
             )}

@@ -8,6 +8,8 @@ backend/main
 
 # ไฟล์แวดล้อมและอื่นๆ
 .env
+.env.*
+!.env.example
 .DS_Store
 
 # PlatformIO
