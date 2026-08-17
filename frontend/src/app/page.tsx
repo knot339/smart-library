@@ -100,6 +100,38 @@ export default function TabletPage() {
     }
   }, [step]);
 
+  // รับข้อมูลจากการสแกน Barcode/Keyboard แบบ Global (ไม่ต้องคลิกที่ช่อง input ก่อน)
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      // ถ้าโฟกัสอยู่ที่ input อยู่แล้ว ให้ทำงานตามปกติ
+      if (document.activeElement?.tagName === "INPUT") return;
+      // ข้ามปุ่มควบคุมต่างๆ
+      if (e.ctrlKey || e.altKey || e.metaKey) return;
+      
+      if (step === "identify") {
+        const el = document.getElementById("input-identify");
+        if (el) {
+          el.focus();
+          if (e.key.length === 1) {
+            setInputCode(prev => prev + e.key);
+            e.preventDefault();
+          }
+        }
+      } else if (step === "check-book") {
+        const el = document.getElementById("input-check-book");
+        if (el) {
+          el.focus();
+          if (e.key.length === 1) {
+            setInputBarcode(prev => prev + e.key);
+            e.preventDefault();
+          }
+        }
+      }
+    };
+    window.addEventListener("keydown", handleGlobalKeyDown);
+    return () => window.removeEventListener("keydown", handleGlobalKeyDown);
+  }, [step]);
+
 
   // ขั้นตอนที่ 1: ตรวจสอบข้อมูลเพื่อยืนยันตัวตนของผู้ใช้งานจากฐานข้อมูล
   const handleIdentify = async () => {
@@ -491,6 +523,7 @@ export default function TabletPage() {
                 <h2 className="text-4xl font-bold text-blue-900 mb-3">ระบุตัวตน</h2>
                 <p className="text-gray-400 text-xl mb-8">กรุณากรอกรหัส บัตรนักศึกษา หรือเบอร์โทร</p>
                 <input
+                  id="input-identify"
                   type="text"
                   placeholder="รหัศนักศึกษา หรือ เบอร์โทร"
                   value={inputCode}
@@ -566,6 +599,7 @@ export default function TabletPage() {
                 <div className="text-center flex-none mt-auto">
                   <p className="text-gray-500 text-base mb-2">กรอก Barcode ของหนังสือที่ต้องการคืน</p>
                   <input
+                    id="input-check-book"
                     type="text"
                     placeholder="Barcode หรือ รหัสหนังสือ"
                     value={inputBarcode}
