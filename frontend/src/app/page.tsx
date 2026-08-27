@@ -18,6 +18,7 @@ export default function TabletPage() {
   const [time, setTime] = useState("");
   const [motorOpen, setMotorOpen] = useState(false);
   const [motorLoading, setMotorLoading] = useState(false);
+  const [returnTime, setReturnTime] = useState<Date | null>(null);
   const booksEndRef = useRef<HTMLDivElement>(null);
 
   const runMotor = async (command: "open" | "dump" | "close", waitMs: number) => {
@@ -280,6 +281,7 @@ export default function TabletPage() {
 
       // สั่งการปิดตู้รับคืน (ยืดแกนชักจนสุด) และรอ 20 วินาที
       await runMotor("close", 20000);
+      setReturnTime(new Date());
       setStep("success");
     } catch {
       setErrorMsg("เกิดข้อผิดพลาด กรุณาลองใหม่");
@@ -503,9 +505,15 @@ export default function TabletPage() {
           })}
         </div>
 
-        {/* Main Card */}
-        <div className="flex-1 overflow-y-auto custom-scrollbar p-4 min-h-0 flex flex-col">
-          <div className="mx-auto bg-white rounded-3xl shadow-2xl w-full max-w-lg p-6 flex flex-col relative min-h-[450px] h-full my-auto shrink-0 overflow-hidden">
+        {/* Main Card Area */}
+        <div className="flex-1 overflow-y-auto custom-scrollbar p-4 min-h-0 flex justify-center items-stretch w-full">
+          
+          <div className="flex w-full max-w-[1400px] items-stretch">
+            {/* Spacer ซ้าย (เพื่อให้กล่องกลางอยู่ตรงกลางเสมอ) */}
+            <div className="flex-1 hidden lg:block" />
+
+            {/* กล่องตรงกลาง (Center Card) */}
+            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg p-6 flex flex-col relative min-h-[450px] h-full shrink-0 overflow-hidden z-10 mx-auto">
             
             {/* Motor Loading Overlay for the Card */}
             {motorLoading && (
@@ -565,49 +573,18 @@ export default function TabletPage() {
 
                 <div className="flex-1 overflow-y-auto min-h-0 custom-scrollbar px-2 my-2 space-y-4">
                   {/* ส่วนแสดงรายละเอียดข้อมูลของผู้ใช้งานที่กำลังทำรายการ */}
-                  <div className="bg-blue-50 rounded-2xl p-4 border border-blue-100 text-left">
-                    <p className="text-blue-400 text-lg">ผู้คืนหนังสือ</p>
-                    <p className="text-blue-900 text-3xl font-bold">{borrower?.name}</p>
-                    <p className="text-blue-500 text-xl">{borrower?.code}</p>
-                    {borrower?.phone && (
-                      <p className="text-blue-400 text-lg mt-1">📱 เบอร์โทร: <span className="font-semibold">{borrower.phone}</span></p>
-                    )}
+                  <div className="bg-blue-50/80 rounded-2xl p-4 border border-blue-100 flex items-center justify-between gap-3 mb-4">
+                    <div className="text-left">
+                      <p className="text-blue-400 text-xs mb-1 font-semibold uppercase tracking-wider">ผู้คืนหนังสือ</p>
+                      <p className="text-blue-900 text-2xl font-bold leading-none">{borrower?.name}</p>
+                    </div>
+                    <div className="text-right flex flex-col items-end">
+                      <p className="text-blue-700 font-semibold bg-blue-200/50 px-3 py-1 rounded-lg text-lg mb-1">{borrower?.code}</p>
+                      {borrower?.phone && (
+                        <p className="text-blue-500 text-sm">📱 {borrower.phone}</p>
+                      )}
+                    </div>
                   </div>
-
-                  {/* ส่วนแสดงรายการหนังสือที่ผู้ใช้งานรายนี้ยังคงค้างส่ง */}
-                  {activeBorrows.length > 0 && (
-                    <div className="bg-yellow-50 rounded-2xl p-4 border border-yellow-200 text-left">
-                      <p className="text-yellow-700 text-lg font-semibold mb-2">📋 หนังสือที่ยังยืมอยู่ ({activeBorrows.length} เล่ม)</p>
-                      <div className="pr-2">
-                        {activeBorrows.map((r, idx) => (
-                          <div key={r.NO || idx} className="text-xl text-gray-700 py-1 border-b border-yellow-100 last:border-0">
-                            <p className="font-medium">{r.TITLE}</p>
-                            <p className="text-gray-500 text-sm mt-1">กำหนดคืน: {r.DUEDATE}</p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {activeBorrows.length === 0 && (
-                    <div className="bg-gray-50 rounded-2xl p-4 border border-gray-200">
-                      <p className="text-gray-400 text-xl">ไม่พบรายการยืมหนังสือในระบบ</p>
-                    </div>
-                  )}
-
-                  {/* ส่วนแสดงรายการหนังสือที่สแกนเพื่อเตรียมคืน */}
-                  {booksToReturn.length > 0 && (
-                    <div className="bg-green-50 rounded-2xl p-4 border border-green-200 text-left">
-                      <p className="text-green-700 font-semibold text-lg mb-2">✅ หนังสือที่สแกนแล้ว ({booksToReturn.length} เล่ม)</p>
-                      <div className="pr-2">
-                        {booksToReturn.map(b => (
-                          <div key={b.id} className="text-xl text-gray-800 py-1 border-b border-green-100 flex justify-between items-center last:border-0">
-                            <span className="truncate pr-3">{b.title}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
                   <div ref={booksEndRef} />
                 </div>
 
@@ -657,20 +634,7 @@ export default function TabletPage() {
                     </div>
                   </div>
 
-                  {/* ส่วนแสดงรายการหนังสือเล่มอื่น ๆ ที่ผู้ใช้งานรายนี้ยังคงค้างส่ง */}
-                  {activeBorrows.length > 0 && (
-                    <div className="bg-yellow-50 rounded-2xl p-5 border border-yellow-200 text-left">
-                      <p className="text-yellow-700 text-base font-semibold mb-3">📚 หนังสือที่ยังไม่คืน ({activeBorrows.length} เล่ม)</p>
-                      <div className="space-y-3 pr-2">
-                        {activeBorrows.map((r, idx) => (
-                          <div key={r.NO || idx} className="text-lg text-gray-700 pb-3 border-b border-yellow-100 last:border-0">
-                            <p className="font-medium">{r.TITLE}</p>
-                            <p className="text-gray-500 text-sm mt-1">กำหนดคืน: {r.DUEDATE}</p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                  {/* ไม่ต้องแสดงหนังสือค้างส่งในกล่องกลางแล้ว ไปแสดงกล่องขวาแทน */}
                 </div>
 
                 <div className="text-center flex-none mt-auto">
@@ -707,13 +671,12 @@ export default function TabletPage() {
                     <div className="pl-5 border-l-4 border-green-200 my-3 max-h-32 overflow-y-auto custom-scrollbar pr-2">
                       {booksToReturn.map((b, i) => <p key={i} className="text-gray-700 text-lg truncate">{b.title}</p>)}
                     </div>
-                    <p className="text-gray-700 text-lg"><span className="text-gray-400">เวลา: </span>{new Date().toLocaleString("th-TH")}</p>
+                    {returnTime && (
+                      <p className="text-gray-700 text-lg"><span className="text-gray-400">เวลา: </span>{returnTime.toLocaleString("th-TH")}</p>
+                    )}
                   </div>
 
-                  <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 text-center">
-                    <p className="text-blue-700 text-base font-semibold">🔒 สถานะตู้: ปิดอยู่</p>
-                    <p className="text-blue-500 text-sm mt-1">รอการเลือกของผู้ใช้</p>
-                  </div>
+
                 </div>
 
                 <div className="flex flex-col gap-3 flex-none mt-4">
@@ -742,6 +705,52 @@ export default function TabletPage() {
               </div>
             )}
 
+          </div>
+
+          {/* กล่องขวา (Right Panel) สำหรับแสดงข้อมูลเสริม */}
+          <div className="flex-1 hidden lg:flex pl-6 items-stretch justify-start">
+            {(step === "check-book" || step === "drop") && (
+              <div className="bg-white/95 backdrop-blur-md rounded-3xl shadow-xl w-full max-w-sm p-6 flex flex-col relative h-full shrink-0 overflow-hidden border border-white/50">
+                <h3 className="text-xl font-bold text-blue-900 mb-4 border-b border-gray-200 pb-2">ข้อมูลเพิ่มเติม</h3>
+                
+                <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 space-y-4">
+                  {/* แสดงหนังสือที่สแกนแล้วเฉพาะในหน้า check-book (หน้า drop จะแสดงตรงกลางอยู่แล้ว) */}
+                  {step === "check-book" && booksToReturn.length > 0 && (
+                    <div className="bg-green-50 rounded-2xl p-4 border border-green-200">
+                      <p className="text-green-700 font-semibold text-lg mb-2">✅ สแกนแล้ว ({booksToReturn.length} เล่ม)</p>
+                      <div className="space-y-2">
+                        {booksToReturn.map(b => (
+                          <div key={b.id} className="text-lg text-gray-800 border-b border-green-100 last:border-0 pb-1 truncate">
+                            {b.title}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* แสดงหนังสือค้างส่ง (เสมอใน check-book และ drop) */}
+                  {activeBorrows.length > 0 ? (
+                    <div className="bg-yellow-50 rounded-2xl p-4 border border-yellow-200">
+                      <p className="text-yellow-700 text-lg font-semibold mb-2">📋 ค้างส่ง ({activeBorrows.length} เล่ม)</p>
+                      <div className="space-y-3">
+                        {activeBorrows.map((r, idx) => (
+                          <div key={r.NO || idx} className="text-base text-gray-700 border-b border-yellow-100 last:border-0 pb-2">
+                            <p className="font-medium line-clamp-2 leading-snug">{r.TITLE}</p>
+                            <p className="text-gray-500 text-xs mt-1">กำหนดคืน: {r.DUEDATE}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="bg-gray-50 rounded-2xl p-4 border border-gray-200 text-center">
+                      <p className="text-gray-400 text-base">ไม่พบรายการค้างส่ง</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+          
           </div>
         </div>
 
