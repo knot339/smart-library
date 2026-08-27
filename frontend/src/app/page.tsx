@@ -17,8 +17,22 @@ export default function TabletPage() {
   const [errorMsg, setErrorMsg] = useState("");
   const [time, setTime] = useState("");
   const [motorOpen, setMotorOpen] = useState(false);
-  const motorOpenedRef = useRef(false);
+  const [motorLoading, setMotorLoading] = useState(false);
   const booksEndRef = useRef<HTMLDivElement>(null);
+
+  const runMotor = async (command: "open" | "dump" | "close", waitMs: number) => {
+    setMotorLoading(true);
+    try {
+      await fetch(`${API}/dashboard/motor/${command}`, { method: "POST" });
+      await new Promise(res => setTimeout(res, waitMs));
+      if (command === "open") setMotorOpen(true);
+      if (command === "close") setMotorOpen(false);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setMotorLoading(false);
+    }
+  };
 
   // เลื่อนหน้าจอลงอัตโนมัติเมื่อมีการสแกนหนังสือเพิ่ม
   useEffect(() => {
@@ -89,17 +103,6 @@ export default function TabletPage() {
     return () => ws.close();
   }, []);
 
-  // สั่งการเปิดตู้รับคืนเพียงครั้งเดียวเมื่อผู้ใช้งานเข้าสู่ขั้นตอนการตรวจสอบหนังสือ (ขั้นตอนที่ 3)
-  useEffect(() => {
-    if (step === "check-book" && !motorOpenedRef.current) {
-      motorOpenedRef.current = true;
-      fetch(`${API}/dashboard/motor/open`, { method: "POST" }).catch(() => { });
-      setMotorOpen(true);
-    } else if (step !== "check-book") {
-      motorOpenedRef.current = false;
-    }
-  }, [step]);
-
   // รับข้อมูลจากการสแกน Barcode/Keyboard แบบ Global (ไม่ต้องคลิกที่ช่อง input ก่อน)
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
@@ -163,6 +166,7 @@ export default function TabletPage() {
             if (createRes.ok) {
               setBorrower(newBorrower);
               setActiveBorrows([]);
+              await runMotor("open", 10000);
               setStep("check-book");
             } else {
               setErrorMsg(newBorrower.error || "ไม่สามารถบันทึกข้อมูลได้");
@@ -183,6 +187,7 @@ export default function TabletPage() {
       const borrowData = await borrowRes.json();
       setActiveBorrows(borrowData);
 
+      await runMotor("open", 10000);
       setStep("check-book");
     } catch {
       setErrorMsg("เกิดข้อผิดพลาด กรุณาลองใหม่");
@@ -265,15 +270,16 @@ export default function TabletPage() {
       // ส่งสัญญาณไปยังระบบฮาร์ดแวร์เพื่อดำเนินการคำนวณและอัปเดตความจุของตู้รับคืน
       await fetch(`${API}/simulate/return-book`, { method: "POST" });
 
-      // สั่งการให้ระบบฮาร์ดแวร์ดำเนินการเทหนังสือ (Dump) ลงในตู้จัดเก็บ
-      await fetch(`${API}/dashboard/motor/dump`, { method: "POST" });
+      // สั่งการให้ระบบฮาร์ดแวร์ดำเนินการเทหนังสือ (Dump) ลงในตู้จัดเก็บ และรอ 10 วินาที
+      await runMotor("dump", 10000);
 
       // หน่วงเวลา 5 วินาที เพื่อให้แน่ใจว่าหนังสือตกลงในตู้จัดเก็บอย่างสมบูรณ์
+      setMotorLoading(true);
       await new Promise(resolve => setTimeout(resolve, 5000));
+      setMotorLoading(false);
 
-      // สั่งการปิดตู้รับคืน (ยืดแกนชักจนสุด) เพื่อเตรียมความพร้อมสำหรับการทำรายการครั้งต่อไป
-      await fetch(`${API}/dashboard/motor/close`, { method: "POST" });
-      setMotorOpen(false);
+      // สั่งการปิดตู้รับคืน (ยืดแกนชักจนสุด) และรอ 20 วินาที
+      await runMotor("close", 20000);
       setStep("success");
     } catch {
       setErrorMsg("เกิดข้อผิดพลาด กรุณาลองใหม่");
@@ -281,12 +287,11 @@ export default function TabletPage() {
     setLoading(false);
   };
 
-  const handleReset = () => {
+  const handleReset = async () => {
     // ดำเนินการปิดตู้รับคืนหากยังเปิดอยู่ พร้อมทั้งรีเซ็ตข้อมูลการทำรายการทั้งหมด
     if (motorOpen) {
-      fetch(`${API}/dashboard/motor/close`, { method: "POST" }).catch(() => { });
+      await runMotor("close", 10000);
     }
-    motorOpenedRef.current = false;
     setStep("select-user");
     setInputCode("");
     setInputBarcode("");
@@ -309,6 +314,7 @@ export default function TabletPage() {
       setBorrower(data);
       const borrowRes = await fetch(`${API}/patron/${data.code}/borrows`);
       setActiveBorrows(await borrowRes.json());
+      await runMotor("open", 10000);
       setStep("check-book");
     } catch { setErrorMsg("เกิดข้อผิดพลาด"); }
     setLoading(false);
@@ -499,7 +505,16 @@ export default function TabletPage() {
 
         {/* Main Card */}
         <div className="flex-1 overflow-y-auto custom-scrollbar p-4 min-h-0 flex flex-col">
-          <div className="mx-auto bg-white rounded-3xl shadow-2xl w-full max-w-lg p-6 flex flex-col relative min-h-[450px] h-full my-auto shrink-0">
+          <div className="mx-auto bg-white rounded-3xl shadow-2xl w-full max-w-lg p-6 flex flex-col relative min-h-[450px] h-full my-auto shrink-0 overflow-hidden">
+            
+            {/* Motor Loading Overlay for the Card */}
+            {motorLoading && (
+              <div className="absolute inset-0 z-50 bg-white/90 flex flex-col items-center justify-center backdrop-blur-sm">
+                <div className="w-20 h-20 border-8 border-blue-200 border-t-blue-600 rounded-full animate-spin mb-6 shadow-lg"></div>
+                <h2 className="text-2xl font-bold text-blue-900 mb-2">กรุณารอสักครู่...</h2>
+                <p className="text-blue-600 text-lg animate-pulse font-medium text-center px-4">ระบบกำลังควบคุมมอเตอร์แกนชัก</p>
+              </div>
+            )}
 
             {/* ขั้นตอนที่ 1: หน้าจอเริ่มต้นระบบการรับคืนหนังสือ */}
             {step === "select-user" && (
@@ -704,10 +719,11 @@ export default function TabletPage() {
                 <div className="flex flex-col gap-3 flex-none mt-4">
                   {/* ปุ่มคำสั่งสำหรับการดำเนินการคืนหนังสือเล่มถัดไป ด้วยข้อมูลผู้ใช้งานเดิม */}
                   <button
-                    onClick={() => {
+                    onClick={async () => {
                       setBooksToReturn([]);
                       setInputBarcode("");
                       setErrorMsg("");
+                      await runMotor("open", 10000);
                       setStep("check-book"); // ข้ามขั้นตอนไปสู่หน้าการตรวจสอบรหัสหนังสือ
                     }}
                     className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-4 rounded-2xl text-xl transition active:scale-95"

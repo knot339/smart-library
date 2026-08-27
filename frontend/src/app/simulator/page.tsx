@@ -210,6 +210,116 @@ export default function SimulatorPage() {
           </div>
         </div>
 
+        {/* ส่วนการควบคุมมอเตอร์แกนชัก */}
+        <div className="bg-gray-800 rounded-lg p-4 mb-4">
+          <h2 className="font-semibold mb-1">⚙️ จำลองมอเตอร์แกนชัก (Linear Actuator)</h2>
+          <p className="text-gray-400 text-xs mb-3">ควบคุมมอเตอร์ (3 ตำแหน่งอัตโนมัติ และ โหมดแมนนวล)</p>
+          
+          <div className="flex flex-col gap-4 bg-gray-700 p-4 rounded-lg shadow-inner border border-gray-600">
+            <div className="grid grid-cols-3 gap-3">
+              {/* 3 ตำแหน่งหลัก */}
+              <button
+                onClick={async () => {
+                  try {
+                    const res = await fetch(`${API}/simulator/send`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ type: "motor", value: "open" }),
+                    });
+                    const data = await res.json();
+                    addLog(`⚙️ Motor → เปิด (Open) (ส่งไปยัง ${data.clients} ESP32)`);
+                  } catch { addLog(`❌ ส่งคำสั่ง Motor ไม่ได้`); }
+                }}
+                className="bg-green-600 hover:bg-green-500 text-white font-bold py-2 rounded-lg transition text-sm"
+              >
+                🟢 เปิด (Open)
+              </button>
+              <button
+                onClick={async () => {
+                  try {
+                    const res = await fetch(`${API}/simulator/send`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ type: "motor", value: "dump" }),
+                    });
+                    const data = await res.json();
+                    addLog(`⚙️ Motor → เทหนังสือ (Dump) (ส่งไปยัง ${data.clients} ESP32)`);
+                  } catch { addLog(`❌ ส่งคำสั่ง Motor ไม่ได้`); }
+                }}
+                className="bg-yellow-600 hover:bg-yellow-500 text-white font-bold py-2 rounded-lg transition text-sm"
+              >
+                📦 เท (Dump)
+              </button>
+              <button
+                onClick={async () => {
+                  try {
+                    const res = await fetch(`${API}/simulator/send`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ type: "motor", value: "close" }),
+                    });
+                    const data = await res.json();
+                    addLog(`⚙️ Motor → ปิด (Close) (ส่งไปยัง ${data.clients} ESP32)`);
+                  } catch { addLog(`❌ ส่งคำสั่ง Motor ไม่ได้`); }
+                }}
+                className="bg-gray-600 hover:bg-gray-500 text-white font-bold py-2 rounded-lg transition text-sm"
+              >
+                🔴 ปิด (Close)
+              </button>
+
+              {/* แบบแมนนวล */}
+              <button
+                onClick={async () => {
+                  try {
+                    const res = await fetch(`${API}/simulator/send`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ type: "motor", value: "extend" }),
+                    });
+                    const data = await res.json();
+                    addLog(`⚙️ Motor → ยืด (Extend Manual) (ส่งไปยัง ${data.clients} ESP32)`);
+                  } catch { addLog(`❌ ส่งคำสั่ง Motor ไม่ได้`); }
+                }}
+                className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 rounded-lg transition text-sm"
+              >
+                ⬆️ ยืด (Extend)
+              </button>
+              <button
+                onClick={async () => {
+                  try {
+                    const res = await fetch(`${API}/simulator/send`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ type: "motor", value: "retract" }),
+                    });
+                    const data = await res.json();
+                    addLog(`⚙️ Motor → หด (Retract Manual) (ส่งไปยัง ${data.clients} ESP32)`);
+                  } catch { addLog(`❌ ส่งคำสั่ง Motor ไม่ได้`); }
+                }}
+                className="bg-orange-600 hover:bg-orange-500 text-white font-bold py-2 rounded-lg transition text-sm"
+              >
+                ⬇️ หด (Retract)
+              </button>
+              <button
+                onClick={async () => {
+                  try {
+                    const res = await fetch(`${API}/simulator/send`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ type: "motor", value: "stop" }),
+                    });
+                    const data = await res.json();
+                    addLog(`⚙️ Motor → หยุด (Stop) (ส่งไปยัง ${data.clients} ESP32)`);
+                  } catch { addLog(`❌ ส่งคำสั่ง Motor ไม่ได้`); }
+                }}
+                className="bg-red-600 hover:bg-red-500 text-white font-bold py-2 rounded-lg transition text-sm shadow-md"
+              >
+                🛑 หยุด (Stop)
+              </button>
+            </div>
+          </div>
+        </div>
+
         {/* ส่วนแสดงข้อความจำลองประวัติการทำงานในรูปแบบ Terminal (Log) */}
         <div className="bg-black rounded-lg p-4 font-mono text-sm">
           <p className="text-green-400 mb-2">▶ Mock Terminal Log</p>

@@ -6,7 +6,7 @@
 // ===== WiFi & MQTT =====
 const char* WIFI_SSID     = "P-Hot";
 const char* WIFI_PASSWORD = "12345678";
-const char* MQTT_SERVER   = "10.147.169.90";
+const char* MQTT_SERVER   = "10.111.86.90";
 const int   MQTT_PORT     = 1883;
 
 // ===== RFID (Serial2) =====
@@ -26,17 +26,20 @@ const unsigned long timeoutGap = 25;
 // ===== LED =====
 #define LED_PIN 2
 
-// ===== L298N Motor Driver (1 มอเตอร์) =====
-#define MOTOR_IN1 25
-#define MOTOR_IN2 26
-#define MOTOR_ENA 27
+// ===== BTS7960 Motor Driver (1 มอเตอร์) =====
+#define MOTOR_RPWM 26
+#define MOTOR_LPWM 25
+#define MOTOR_EN   27 // R_EN และ L_EN มัดรวมกัน
 
-int motorSpeed = 200; // ความเร็วเริ่มต้น (0–255)
+int motorSpeed = 255; // ความเร็วสูงสุด (0–255)
 
-// ตั้งค่าระยะเวลาทำงานของมอเตอร์ 
-const unsigned long OPEN_DURATION = 5000;  // เวลาในการเปิดฝาตู้
-const unsigned long CLOSE_DURATION = 5000; // เวลาในการปิดฝาตู้
-const unsigned long DUMP_DURATION = 5000;  // เวลาในการเทหนังสือ
+// ตั้งค่าระยะเวลาทำงานของมอเตอร์ (ค่าคงที่)
+const unsigned long STEP_DURATION = 10000; // เวลาสำหรับ 1 ช่วง (เช่น จาก Dump -> Open หรือ Open -> Close) คือ 10 วินาที
+const unsigned long MAX_DURATION = 20000;  // เวลาสูงสุด (2 ช่วง: หดสุดไปยืดสุด) คือ 20 วินาที
+
+// สถานะตำแหน่งมอเตอร์: -1 = Unknown, 0 = Dump (หดสุด), 1 = Open (ตรงกลาง), 2 = Close (ยืดสุด)
+int currentPos = -1; 
+int targetPos = -1;
 
 // ตัวแปรจับเวลาสำหรับหยุดมอเตอร์
 unsigned long motorStartTime = 0;
@@ -45,21 +48,18 @@ bool isMotorRunning = false;
 
 // ----- ฟังก์ชันควบคุมมอเตอร์ -----
 void motorStop() {
-  analogWrite(MOTOR_ENA, 0);
-  digitalWrite(MOTOR_IN1, LOW);
-  digitalWrite(MOTOR_IN2, LOW);
+  analogWrite(MOTOR_RPWM, 0);
+  analogWrite(MOTOR_LPWM, 0);
 }
 
 void motorForward(int spd) {
-  digitalWrite(MOTOR_IN1, HIGH);
-  digitalWrite(MOTOR_IN2, LOW);
-  analogWrite(MOTOR_ENA, spd);
+  analogWrite(MOTOR_LPWM, 0);
+  analogWrite(MOTOR_RPWM, spd);
 }
 
 void motorBackward(int spd) {
-  digitalWrite(MOTOR_IN1, LOW);
-  digitalWrite(MOTOR_IN2, HIGH);
-  analogWrite(MOTOR_ENA, spd);
+  analogWrite(MOTOR_RPWM, 0);
+  analogWrite(MOTOR_LPWM, spd);
 }
 // -----------------------------------
 
@@ -103,29 +103,62 @@ void callback(char* topic, byte* payload, unsigned int length) {
       motorSpeed = constrain((int)doc["speed"], 0, 255);
     }
 
-    if (msgValue == "open") { 
-      motorForward(motorSpeed);  
-      motorRunDuration = OPEN_DURATION;
+    if (msgValue == "open" || msgValue == "close" || msgValue == "dump") {
+      // 0 = Dump (หดสุด), 1 = Open (ตรงกลาง), 2 = Close (ยืดสุด)
+      if (msgValue == "dump") targetPos = 0;
+      else if (msgValue == "open") targetPos = 1;
+      else if (msgValue == "close") targetPos = 2;
+
+      if (currentPos == targetPos) {
+        Serial.println("[MOTOR] Already at target position. Ignoring.");
+        return; 
+      }
+
+      if (currentPos == -1) {
+        motorRunDuration = MAX_DURATION;
+        if (targetPos == 0) { 
+          motorBackward(motorSpeed);
+          Serial.printf("[MOTOR] CALIBRATING to DUMP (Backward), Time=%dms\n", motorRunDuration);
+        } else {
+          motorForward(motorSpeed);
+          Serial.printf("[MOTOR] CALIBRATING to %s (Forward), Time=%dms\n", msgValue.c_str(), motorRunDuration);
+        }
+      } else {
+        int diff = targetPos - currentPos;
+        motorRunDuration = abs(diff) * STEP_DURATION;
+        
+        if (diff > 0) {
+          motorForward(motorSpeed);
+          Serial.printf("[MOTOR] MOVE to %s (Forward), Steps=%d, Time=%dms\n", msgValue.c_str(), diff, motorRunDuration);
+        } else {
+          motorBackward(motorSpeed);
+          Serial.printf("[MOTOR] MOVE to %s (Backward), Steps=%d, Time=%dms\n", msgValue.c_str(), abs(diff), motorRunDuration);
+        }
+      }
+
       motorStartTime = millis();
       isMotorRunning = true;
-      Serial.printf("[MOTOR] OPEN (Forward) speed=%d, Time=%dms\n", motorSpeed, OPEN_DURATION); 
+      currentPos = targetPos; // Update position immediately
     }
-    else if (msgValue == "close") { 
-      motorBackward(motorSpeed); 
-      motorRunDuration = CLOSE_DURATION;
+    // คำสั่งแมนนวล: สูญเสียตำแหน่ง
+    else if (msgValue.startsWith("extend") || msgValue.startsWith("retract")) {
+      currentPos = -1; // Reset position state
+      unsigned long duration = 20000; // เวลาทำงานสูงสุดแบบแมนนวลคือ 20 วินาที
+      
+      if (msgValue.startsWith("extend")) {
+        motorForward(motorSpeed);
+        Serial.printf("[MOTOR] EXTEND MANUAL (Forward) speed=%d, Time=%dms\n", motorSpeed, duration);
+      } else {
+        motorBackward(motorSpeed);
+        Serial.printf("[MOTOR] RETRACT MANUAL (Backward) speed=%d, Time=%dms\n", motorSpeed, duration);
+      }
+      
+      motorRunDuration = duration;
       motorStartTime = millis();
       isMotorRunning = true;
-      Serial.printf("[MOTOR] CLOSE (Backward) speed=%d, Time=%dms\n", motorSpeed, CLOSE_DURATION); 
     }
-    else if (msgValue == "dump") {
-      // เทหนังสือ (สมมติว่าเป็นการหมุนเดินหน้าเช่นเดียวกับเปิด แต่อาจจะใช้เวลานานกว่า)
-      motorForward(motorSpeed); 
-      motorRunDuration = DUMP_DURATION;
-      motorStartTime = millis();
-      isMotorRunning = true;
-      Serial.printf("[MOTOR] DUMP speed=%d, Time=%dms\n", motorSpeed, DUMP_DURATION);
-    }
-    else if (msgValue == "stop") { 
+    else if (msgValue.startsWith("stop")) { 
+      currentPos = -1; // Reset position state
       motorStop();               
       isMotorRunning = false;
       Serial.println("[MOTOR] STOP (Manual)"); 
@@ -162,9 +195,10 @@ void setup() {
   digitalWrite(LED_PIN, LOW);
 
   // Motor pins
-  pinMode(MOTOR_IN1, OUTPUT);
-  pinMode(MOTOR_IN2, OUTPUT);
-  pinMode(MOTOR_ENA, OUTPUT);
+  pinMode(MOTOR_RPWM, OUTPUT);
+  pinMode(MOTOR_LPWM, OUTPUT);
+  pinMode(MOTOR_EN, OUTPUT);
+  digitalWrite(MOTOR_EN, HIGH); // เปิดใช้งาน driver ตลอดเวลา
 
   motorStop(); // ตั้งต้นหยุดก่อน
 
