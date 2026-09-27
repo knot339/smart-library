@@ -85,7 +85,7 @@ export default function AviMjpegPlayer({ src, onClose }: AviMjpegPlayerProps) {
         if (dv.getUint32(0, false) !== 0x52494646) throw new Error("Not a RIFF file"); // "RIFF"
         if (dv.getUint32(8, false) !== 0x41564920) throw new Error("Not an AVI file"); // "AVI "
 
-        let offset = 12;
+        const offset = 12;
         const frames: AviFrame[] = [];
         let microSecPerFrame = 200000; // fallback
 

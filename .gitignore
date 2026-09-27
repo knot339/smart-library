@@ -5,6 +5,7 @@ frontend/out/
 
 # ไฟล์ของ Go (Backend)
 backend/main
+backend/*.exe
 
 # ไฟล์แวดล้อมและอื่นๆ
 .env
@@ -14,3 +15,8 @@ backend/main
 
 # PlatformIO
 .pio/
+
+# ไฟล์ credentials ของ ESP32 firmware
+firmware/**/include/secrets.h
+
+.claude/

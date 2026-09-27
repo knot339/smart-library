@@ -11,6 +11,7 @@ export default function SimulatorPage() {
   const [rfidInput, setRfidInput] = useState("");
   const [connectedClients, setConnectedClients] = useState(0);
   const [ledOn, setLedOn] = useState(false); // ใช้สำหรับทดสอบการเชื่อมต่อกับอุปกรณ์ ESP32
+  const [fastMode, setFastMode] = useState(false);
 
   useEffect(() => {
     const fetchStatus = async () => {
@@ -19,6 +20,7 @@ export default function SimulatorPage() {
         const data = await res.json();
         setIsFull(data.is_full);
         setMotorLogs(data.motor_logs || []); // ดึงข้อมูลประวัติการทำงาน (log) ของมอเตอร์จาก Backend
+        setFastMode(data.fast_mode || false);
       } catch (err) {
         console.error("Fetch status error:", err);
       }
@@ -30,7 +32,8 @@ export default function SimulatorPage() {
 
   const addLog = (msg: string) => {
     const time = new Date().toLocaleTimeString("th-TH");
-    setLog((prev) => [`[${time}] ${msg}`, ...prev].slice(0, 15));
+    // ต่อท้ายรายการล่าสุด (ไม่แทรกข้างบน) ให้ไล่จากเก่าไปใหม่บนลงล่างแบบ Terminal/cmd
+    setLog((prev) => [...prev, `[${time}] ${msg}`].slice(-15));
   };
 
   const sendToTablet = async (type: "barcode" | "rfid", value: string) => {
@@ -76,9 +79,23 @@ export default function SimulatorPage() {
     }
   };
 
+  const toggleFastMode = async (fast: boolean) => {
+    try {
+      const res = await fetch(`${API}/simulate/fast-mode`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fast_mode: fast }),
+      });
+      const data = await res.json();
+      setFastMode(fast);
+      addLog(fast ? "🚀 เปิดโหมด Fast Mode แล้ว" : "🐢 ปิดโหมด Fast Mode แล้ว");
+    } catch {
+      addLog("❌ ตั้งค่า Fast Mode ไม่สำเร็จ");
+    }
+  };
 
-
-  // นำประวัติการทำงาน (Log) ทั้งสองแหล่งมารวมและเรียงตามลำดับเวลา โดยนำประวัติจาก Frontend ไว้ด้านบน
+  // นำประวัติการทำงาน (Log) ทั้งสองแหล่งมารวมกัน เรียงจากเก่าไปใหม่ (บนลงล่างแบบ Terminal/cmd)
+  // motorLogs จาก backend เก็บแบบใหม่ไปเก่า (prepend) จึงต้อง reverse ก่อนต่อท้าย log ฝั่ง frontend
   const allLogs = [...log, ...[...motorLogs].reverse()];
 
   // ทดสอบการสั่งการเชื่อมต่อฮาร์ดแวร์ ESP32 (ทดสอบด้วยการเปิด-ปิด LED)
@@ -101,10 +118,10 @@ export default function SimulatorPage() {
     <div className="min-h-screen bg-gray-900 text-white p-6">
       <div className="max-w-2xl mx-auto">
 
-        {/* ส่วนหัวของหน้าต่างจำลอง (Header) */}
+        {/* ส่วนหัวของหน้าต่างควบคุม (Header) */}
         <div className="mb-6">
           <h1 className="text-2xl font-bold">🛠️ Simulator Dashboard</h1>
-          <p className="text-gray-400 text-sm">จำลองฮาร์ดแวร์ — สำหรับนักพัฒนาเท่านั้น</p>
+          <p className="text-gray-400 text-sm">ควบคุมฮาร์ดแวร์โดยตรง — สำหรับนักพัฒนาเท่านั้น</p>
           <div className="flex items-center gap-2 mt-2">
             <div className={`w-2 h-2 rounded-full ${connectedClients > 0 ? "bg-green-400" : "bg-gray-500"}`} />
             <p className="text-xs text-gray-400">Tablet เชื่อมต่ออยู่: {connectedClients} เครื่อง</p>
@@ -134,14 +151,38 @@ export default function SimulatorPage() {
               🔴 ตู้เต็ม
             </button>
           </div>
-          <button onClick={handleReset} className="w-full bg-gray-600 hover:bg-gray-500 text-white py-2 rounded-lg text-sm transition">
+          <button onClick={handleReset} className="w-full bg-gray-600 hover:bg-gray-500 text-white py-2 rounded-lg text-sm transition mt-3">
             🔄 รีเซ็ต
           </button>
         </div>
 
-        {/* ส่วนการจำลองการทำงานของเครื่องอ่านบาร์โค้ด (Barcode Scanner) */}
+        {/* ส่วนการตั้งค่าระบบทดลอง (Fast Mode) */}
         <div className="bg-gray-800 rounded-lg p-4 mb-4">
-          <h2 className="font-semibold mb-1">📷 จำลอง Barcode Scanner</h2>
+          <div className="flex justify-between items-center">
+            <div>
+              <h2 className="font-semibold mb-1">🚀 ระบบทดลอง (Fast Mode)</h2>
+              <p className="text-gray-400 text-xs">ข้ามดีเลย์มอเตอร์เพื่อทดสอบแอปพลิเคชันอย่างรวดเร็ว (ไม่ต้องต่อ ESP32)</p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => toggleFastMode(true)}
+                className={`px-3 py-1 rounded-lg text-sm font-semibold transition ${fastMode ? "bg-blue-600" : "bg-gray-600 hover:bg-gray-500"}`}
+              >
+                เปิด
+              </button>
+              <button
+                onClick={() => toggleFastMode(false)}
+                className={`px-3 py-1 rounded-lg text-sm font-semibold transition ${!fastMode ? "bg-red-600" : "bg-gray-600 hover:bg-gray-500"}`}
+              >
+                ปิด
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* ส่วนทดสอบส่งค่าจากเครื่องอ่านบาร์โค้ด (Barcode Scanner) */}
+        <div className="bg-gray-800 rounded-lg p-4 mb-4">
+          <h2 className="font-semibold mb-1">📷 ทดสอบ Barcode Scanner</h2>
           <p className="text-gray-400 text-xs mb-3">ส่งรหัสนักศึกษา/เบอร์โทร ไปยังหน้า Tablet (แทนการสแกนบัตร)</p>
           <div className="flex gap-2">
             <input
@@ -162,9 +203,9 @@ export default function SimulatorPage() {
           </div>
         </div>
 
-        {/* ส่วนการจำลองการทำงานของเครื่องอ่าน RFID (RFID Reader) */}
+        {/* ส่วนทดสอบส่งค่าจากเครื่องอ่าน RFID (RFID Reader) */}
         <div className="bg-gray-800 rounded-lg p-4 mb-4">
-          <h2 className="font-semibold mb-1">📡 จำลอง RFID Reader</h2>
+          <h2 className="font-semibold mb-1">📡 ทดสอบ RFID Reader</h2>
           <p className="text-gray-400 text-xs mb-3">ส่ง Barcode/RFID หนังสือ ไปยังหน้า Tablet (แทนการสแกน RFID)</p>
           <div className="flex gap-2">
             <input
@@ -212,7 +253,7 @@ export default function SimulatorPage() {
 
         {/* ส่วนการควบคุมมอเตอร์แกนชัก */}
         <div className="bg-gray-800 rounded-lg p-4 mb-4">
-          <h2 className="font-semibold mb-1">⚙️ จำลองมอเตอร์แกนชัก (Linear Actuator)</h2>
+          <h2 className="font-semibold mb-1">⚙️ ควบคุมมอเตอร์แกนชัก (Linear Actuator)</h2>
           <p className="text-gray-400 text-xs mb-3">ควบคุมมอเตอร์ (3 ตำแหน่งอัตโนมัติ และ โหมดแมนนวล)</p>
           
           <div className="flex flex-col gap-4 bg-gray-700 p-4 rounded-lg shadow-inner border border-gray-600">
@@ -320,9 +361,9 @@ export default function SimulatorPage() {
           </div>
         </div>
 
-        {/* ส่วนแสดงข้อความจำลองประวัติการทำงานในรูปแบบ Terminal (Log) */}
+        {/* ส่วนแสดงประวัติการทำงานในรูปแบบ Terminal (Log) */}
         <div className="bg-black rounded-lg p-4 font-mono text-sm">
-          <p className="text-green-400 mb-2">▶ Mock Terminal Log</p>
+          <p className="text-green-400 mb-2">▶ Terminal Log</p>
           {allLogs.length === 0 && <p className="text-gray-500">รอคำสั่ง...</p>}
           {allLogs.map((entry, i) => (
             <p key={i} className={`

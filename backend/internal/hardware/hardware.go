@@ -6,10 +6,11 @@ type MockHardware struct {
 	MotorStatus string
 	MotorLogs   []string
 	IsFull      bool
+	FastMode    bool
 }
 
 func NewMockHardware() *MockHardware {
-	return &MockHardware{MotorStatus: "closed", MotorLogs: []string{}, IsFull: false}
+	return &MockHardware{MotorStatus: "closed", MotorLogs: []string{}, IsFull: false, FastMode: false}
 }
 
 var Shared *MockHardware
@@ -23,7 +24,7 @@ func (m *MockHardware) addLog(msg string) {
 	if len(m.MotorLogs) > 20 {
 		m.MotorLogs = m.MotorLogs[:20]
 	}
-	fmt.Println("[Mock]", msg)
+	fmt.Println(msg)
 }
 
 func (m *MockHardware) SetClosed() string {
@@ -57,7 +58,7 @@ func (m *MockHardware) AddBook() {
 	if m.IsFull {
 		status = "เต็ม"
 	}
-	
+
 	m.addLog(fmt.Sprintf("📦 รับหนังสือเข้าตู้ — สถานะ: %s", status))
 }
 
@@ -67,5 +68,14 @@ func (m *MockHardware) SetFull(full bool) {
 		m.addLog("🔴 ตู้เต็ม")
 	} else {
 		m.addLog("🟢 ตู้ว่าง")
+	}
+}
+
+func (m *MockHardware) SetFastMode(fast bool) {
+	m.FastMode = fast
+	if fast {
+		m.addLog("🚀 เปิดโหมด Fast Mode (จำลองความเร็วสูง)")
+	} else {
+		m.addLog("🐢 ปิดโหมด Fast Mode (ความเร็วปกติ)")
 	}
 }

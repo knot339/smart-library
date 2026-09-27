@@ -18,14 +18,41 @@ export default function TabletPage() {
   const [time, setTime] = useState("");
   const [motorOpen, setMotorOpen] = useState(false);
   const [motorLoading, setMotorLoading] = useState(false);
+  const [fastMode, setFastMode] = useState(false);
   const [returnTime, setReturnTime] = useState<Date | null>(null);
   const booksEndRef = useRef<HTMLDivElement>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const pendingRfidRef = useRef<string[]>([]);
+
+  // เล่นเสียง "ปี๊ป" แจ้งเตือนเมื่อสแกน RFID สำเร็จ (ใช้ Web Audio API ไม่ต้องพึ่งไฟล์เสียง)
+  const playBeep = () => {
+    try {
+      if (!audioCtxRef.current) {
+        audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      }
+      const ctx = audioCtxRef.current;
+      if (ctx.state === "suspended") ctx.resume();
+
+      const oscillator = ctx.createOscillator();
+      const gain = ctx.createGain();
+      oscillator.connect(gain);
+      gain.connect(ctx.destination);
+      oscillator.type = "sine";
+      oscillator.frequency.value = 1000;
+      gain.gain.setValueAtTime(0.3, ctx.currentTime);
+      oscillator.start();
+      oscillator.stop(ctx.currentTime + 0.15);
+    } catch (e) {
+      console.error("Beep failed", e);
+    }
+  };
 
   const runMotor = async (command: "open" | "dump" | "close", waitMs: number) => {
     setMotorLoading(true);
     try {
       await fetch(`${API}/dashboard/motor/${command}`, { method: "POST" });
-      await new Promise(res => setTimeout(res, waitMs));
+      const actualWaitMs = fastMode ? 1000 : waitMs;
+      await new Promise(res => setTimeout(res, actualWaitMs));
       if (command === "open") setMotorOpen(true);
       if (command === "close") setMotorOpen(false);
     } catch (e) {
@@ -59,6 +86,7 @@ export default function TabletPage() {
         const res = await fetch(`${API}/status`);
         const data = await res.json();
         setIsFull(data.is_full);
+        setFastMode(data.fast_mode || false);
         // อัปเดตสถานะการทำงานของมอเตอร์จากข้อมูลที่ได้รับจากเซิร์ฟเวอร์
         setMotorOpen(data.motor_status === "open" || data.motor_status === "dump");
       } catch { }
@@ -69,40 +97,74 @@ export default function TabletPage() {
   }, []);
 
   // เชื่อมต่อและจัดการข้อมูลการส่งสัญญาณจากระบบจำลอง (Simulator) ผ่าน WebSocket
+  // ต่อใหม่อัตโนมัติถ้าหลุด (เช่น backend รีสตาร์ท/เน็ตกระตุก) ไม่งั้นถ้าหลุดแล้วค้างตลอด
+  // จนกว่าจะรีเฟรชหน้าเอง จะทำให้ backend ส่ง RFID/barcode มาแต่หน้าเว็บไม่ได้รับอะไรเลย
   useEffect(() => {
-    const ws = new WebSocket(WS_BASE_URL);
+    let active = true;
+    let ws: WebSocket | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
-    ws.onmessage = (event) => {
-      const msg = JSON.parse(event.data);
+    const connect = () => {
+      if (!active) return;
+      ws = new WebSocket(WS_BASE_URL);
 
-      if (msg.type === "barcode") {
-        // จัดการเมื่อได้รับข้อมูลประเภท Barcode เพื่อระบุตัวตนผู้ใช้งาน
-        setInputCode(msg.value);
-        setStep((prev) => {
-          if (prev === "identify") {
-            // ประมวลผลและยืนยันตัวตนอัตโนมัติเมื่อได้รับข้อมูลที่ถูกต้อง
-            setTimeout(() => handleIdentifyWithCode(msg.value), 100);
-          }
-          return prev;
-        });
-      }
+      ws.onmessage = (event) => {
+        const msg = JSON.parse(event.data);
 
-      if (msg.type === "rfid") {
-        // จัดการเมื่อได้รับข้อมูลประเภท RFID เพื่อตรวจสอบข้อมูลของหนังสือ
-        setInputBarcode(msg.value);
-        setStep((prev) => {
-          if (prev === "check-book") {
-            setTimeout(() => handleCheckBookWithBarcode(msg.value), 100);
-          }
-          return prev;
-        });
-      }
+        if (msg.type === "barcode") {
+          // จัดการเมื่อได้รับข้อมูลประเภท Barcode เพื่อระบุตัวตนผู้ใช้งาน
+          setInputCode(msg.value);
+          setStep((prev) => {
+            if (prev === "identify") {
+              // ประมวลผลและยืนยันตัวตนอัตโนมัติเมื่อได้รับข้อมูลที่ถูกต้อง
+              setTimeout(() => handleIdentifyWithCode(msg.value), 100);
+            }
+            return prev;
+          });
+        }
+
+        if (msg.type === "rfid") {
+          // จัดการเมื่อได้รับข้อมูลประเภท RFID เพื่อตรวจสอบข้อมูลของหนังสือ
+          playBeep(); // แจ้งเตือนผู้ใช้งานด้วยเสียงว่าสแกนติดแล้ว
+          setInputBarcode(msg.value);
+          setStep((prev) => {
+            if (prev === "check-book") {
+              setTimeout(() => handleCheckBookWithBarcode(msg.value), 100);
+            } else {
+              // สแกนเข้ามาก่อนที่ตู้จะเปิดเสร็จ (ยังอยู่ขั้นตอน identify ระหว่างรอมอเตอร์)
+              // เก็บไว้ก่อน แล้วค่อยประมวลผลทีหลังตอนเข้าสู่ขั้นตอนตรวจสอบหนังสือจริงๆ
+              pendingRfidRef.current.push(msg.value);
+            }
+            return prev;
+          });
+        }
+      };
+
+      ws.onerror = () => console.log("WebSocket error");
+
+      ws.onclose = () => {
+        if (!active) return;
+        reconnectTimer = setTimeout(connect, 2000);
+      };
     };
 
-    ws.onerror = () => console.log("WebSocket error");
+    connect();
 
-    return () => ws.close();
+    return () => {
+      active = false;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      ws?.close();
+    };
   }, []);
+
+  // ประมวลผล RFID ที่สแกนเข้ามาระหว่างรอ (ก่อนตู้เปิดเสร็จ) ทันทีที่เข้าสู่ขั้นตอนตรวจสอบหนังสือ
+  useEffect(() => {
+    if (step === "check-book" && pendingRfidRef.current.length > 0) {
+      const pending = pendingRfidRef.current;
+      pendingRfidRef.current = [];
+      pending.forEach((value) => handleCheckBookWithBarcode(value));
+    }
+  }, [step]);
 
   // รับข้อมูลจากการสแกน Barcode/Keyboard แบบ Global (ไม่ต้องคลิกที่ช่อง input ก่อน)
   useEffect(() => {
@@ -139,54 +201,56 @@ export default function TabletPage() {
 
   // ขั้นตอนที่ 1: ตรวจสอบข้อมูลเพื่อยืนยันตัวตนของผู้ใช้งานจากฐานข้อมูล
   const handleIdentify = async () => {
-    if (!inputCode.trim()) {
+    const code = inputCode.trim();
+    if (!code) {
       setErrorMsg("กรุณากรอกรหัสนักศึกษา เบอร์โทร หรือบัตรประชาชน");
       return;
     }
     setLoading(true);
     setErrorMsg("");
+
+    // ถ้ารูปแบบเป็นเบอร์โทรศัพท์ (ขึ้นต้นด้วย 0 และมี 10 หลัก) ให้ถือว่าเป็น Guest ทันที
+    if (code.match(/^0\d{9}$/)) {
+      setBorrower({
+        id: 0,
+        code: code,
+        name: "ผู้มาคืนหนังสือ",
+        phone: code,
+        type: "guest"
+      });
+      setActiveBorrows([]);
+      await runMotor("open", 10000);
+      setStep("check-book");
+      setLoading(false);
+      return;
+    }
+
     try {
-      const res = await fetch(`${API}/borrower/code/${inputCode.trim()}`);
+      const res = await fetch(`${API}/borrower/code/${code}`);
       const data = await res.json();
       if (!res.ok) {
-        // กรณีไม่พบข้อมูลผู้ใช้งาน: ตรวจสอบรูปแบบข้อมูลว่าเป็นหมายเลขโทรศัพท์หรือไม่
-        if (inputCode.match(/^0\d{9}$/)) {
-          // กรณีข้อมูลเป็นหมายเลขโทรศัพท์: ดำเนินการสร้างบัญชีผู้ใช้งานทั่วไป (Guest)
-          try {
-            const createRes = await fetch(`${API}/borrowers`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                code: inputCode.trim(),
-                name: "ผู้มาคืนหนังสือ",
-                phone: inputCode.trim(),
-                type: "guest"
-              })
-            });
-            const newBorrower = await createRes.json();
-            if (createRes.ok) {
-              setBorrower(newBorrower);
-              setActiveBorrows([]);
-              await runMotor("open", 10000);
-              setStep("check-book");
-            } else {
-              setErrorMsg(newBorrower.error || "ไม่สามารถบันทึกข้อมูลได้");
-            }
-          } catch {
-            setErrorMsg("เกิดข้อผิดพลาด ไม่สามารถสร้าง guest borrower");
-          }
-        } else {
-          setErrorMsg("ไม่พบข้อมูล กรุณาใส่เลขโทรศัพท์");
-        }
+        setErrorMsg("ไม่พบข้อมูล กรุณาตรวจสอบรหัสอีกครั้ง");
         setLoading(false);
         return;
       }
-      setBorrower(data);
+      
+      // แปลงข้อมูล PatronDetail ที่ได้จาก OPAC ให้อยู่ในรูป Borrower
+      setBorrower({
+        id: data.USERID || 0,
+        code: data.BARCODE,
+        name: `${data.FNAMETHAI || ''} ${data.LNAMETHAI || ''}`.trim(),
+        phone: data.MOBILE || "",
+        type: "member"
+      });
 
       // ดึงข้อมูลรายการหนังสือที่ผู้ใช้งานรายดังกล่าวยังคงทำการยืมอยู่
-      const borrowRes = await fetch(`${API}/patron/${data.code}/borrows`);
-      const borrowData = await borrowRes.json();
-      setActiveBorrows(borrowData);
+      const borrowRes = await fetch(`${API}/patron/${data.BARCODE}/borrows`);
+      if (borrowRes.ok) {
+        const borrowData = await borrowRes.json();
+        setActiveBorrows(borrowData);
+      } else {
+        setActiveBorrows([]);
+      }
 
       await runMotor("open", 10000);
       setStep("check-book");
@@ -196,51 +260,41 @@ export default function TabletPage() {
     setLoading(false);
   };
 
-  // ขั้นตอนที่ 2: ตรวจสอบข้อมูลรายละเอียดของหนังสือโดยใช้รหัส Barcode
-  const handleCheckBook = async () => {
-    if (!inputBarcode.trim()) {
-      setBooksToReturn([]);
-      return;
-    }
-
-    const barcodes = inputBarcode.split(/[\s,]+/).filter(b => b.trim() !== "");
-    if (barcodes.length === 0) {
-      setBooksToReturn([]);
-      return;
-    }
+  // ประมวลผล Barcode ที่สแกนมา (รองรับหลายรหัสคั่นด้วยช่องว่าง/comma) แล้ว "เพิ่ม" เข้าไปในรายการที่สแกนไว้ก่อนหน้า
+  // (ไม่ใช่แทนที่ทั้งหมด เพราะผู้ใช้คืนหนังสือทีละเล่มต่อเนื่องกัน ถ้าแทนที่ เล่มก่อนหน้าจะหายไปทุกครั้งที่สแกนเล่มใหม่)
+  const processScannedBarcodes = async (raw: string) => {
+    const barcodes = raw.split(/[\s,]+/).filter(b => b.trim() !== "");
+    if (barcodes.length === 0) return;
 
     setLoading(true);
     setErrorMsg("");
 
-    let newBooks: Book[] = [];
-    let errors: string[] = [];
+    const errors: string[] = [];
 
-    for (const barcode of barcodes) {
+    for (const b of barcodes) {
       try {
-        const res = await fetch(`${API}/book/barcode/${barcode.trim()}`);
+        const res = await fetch(`${API}/book/barcode/${b.trim()}`);
         const data = await res.json();
         if (!res.ok) {
-          errors.push(`${barcode}: ${data.error || "ไม่พบหนังสือ"}`);
+          errors.push(`${b}: ${data.error || "ไม่พบหนังสือ"}`);
           continue;
         }
-
-        if (newBooks.some(b => b.id === data.id)) {
-          continue;
-        }
-
-        newBooks.push(data);
+        setBooksToReturn(prev => prev.some(x => x.id === data.id) ? prev : [...prev, data]);
       } catch {
-        errors.push(`${barcode}: เกิดข้อผิดพลาด`);
+        errors.push(`${b}: เกิดข้อผิดพลาด`);
       }
     }
-
-    setBooksToReturn(newBooks);
 
     if (errors.length > 0) {
       setErrorMsg(errors.join(" | "));
     }
 
     setLoading(false);
+  };
+
+  // ขั้นตอนที่ 2: ตรวจสอบข้อมูลรายละเอียดของหนังสือโดยใช้รหัส Barcode
+  const handleCheckBook = async () => {
+    await processScannedBarcodes(inputBarcode);
   };
 
   // ขั้นตอนที่ 3: ดำเนินการคืนหนังสือเข้าตู้ พร้อมบันทึกข้อมูลการคืนลงในฐานข้อมูล
@@ -255,8 +309,8 @@ export default function TabletPage() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            book_id: b.id,
-            borrower_id: borrower?.id,
+            book_barcode: b.barcode,
+            borrower_code: borrower?.code,
             returned_by_phone: borrower?.phone || ""
           }),
         });
@@ -276,7 +330,7 @@ export default function TabletPage() {
 
       // หน่วงเวลา 5 วินาที เพื่อให้แน่ใจว่าหนังสือตกลงในตู้จัดเก็บอย่างสมบูรณ์
       setMotorLoading(true);
-      await new Promise(resolve => setTimeout(resolve, 5000));
+      await new Promise(resolve => setTimeout(resolve, fastMode ? 500 : 5000));
       setMotorLoading(false);
 
       // สั่งการปิดตู้รับคืน (ยืดแกนชักจนสุด) และรอ 20 วินาที
@@ -294,6 +348,7 @@ export default function TabletPage() {
     if (motorOpen) {
       await runMotor("close", 10000);
     }
+    pendingRfidRef.current = []; // ล้างสแกนค้างท่อ กันหลุดไปติดรายการของคนถัดไป
     setStep("select-user");
     setInputCode("");
     setInputBarcode("");
@@ -305,17 +360,41 @@ export default function TabletPage() {
   };
 
   // ฟังก์ชันแยกสำหรับการตรวจสอบตัวตนผู้ใช้งาน (รองรับการเรียกใช้งานผ่าน WebSocket)
-  const handleIdentifyWithCode = async (code: string) => {
-    if (!code.trim()) return;
+  const handleIdentifyWithCode = async (codeStr: string) => {
+    const code = codeStr.trim();
+    if (!code) return;
     setLoading(true);
     setErrorMsg("");
+
+    if (code.match(/^0\d{9}$/)) {
+      setBorrower({ id: 0, code: code, name: "ผู้มาคืนหนังสือ", phone: code, type: "guest" });
+      setActiveBorrows([]);
+      await runMotor("open", 10000);
+      setStep("check-book");
+      setLoading(false);
+      return;
+    }
+
     try {
-      const res = await fetch(`${API}/borrower/code/${code.trim()}`);
+      const res = await fetch(`${API}/borrower/code/${code}`);
       const data = await res.json();
-      if (!res.ok) { setErrorMsg("ไม่พบข้อมูล กรุณาใส่เลขโทรศัพท์"); setLoading(false); return; }
-      setBorrower(data);
-      const borrowRes = await fetch(`${API}/patron/${data.code}/borrows`);
-      setActiveBorrows(await borrowRes.json());
+      if (!res.ok) { setErrorMsg("ไม่พบข้อมูล กรุณาใส่รหัสที่ถูกต้อง"); setLoading(false); return; }
+      
+      setBorrower({
+        id: data.USERID || 0,
+        code: data.BARCODE,
+        name: `${data.FNAMETHAI || ''} ${data.LNAMETHAI || ''}`.trim(),
+        phone: data.MOBILE || "",
+        type: "member"
+      });
+
+      const borrowRes = await fetch(`${API}/patron/${data.BARCODE}/borrows`);
+      if (borrowRes.ok) {
+        setActiveBorrows(await borrowRes.json());
+      } else {
+        setActiveBorrows([]);
+      }
+
       await runMotor("open", 10000);
       setStep("check-book");
     } catch { setErrorMsg("เกิดข้อผิดพลาด"); }
@@ -323,48 +402,7 @@ export default function TabletPage() {
   };
 
   const handleCheckBookWithBarcode = async (barcode: string) => {
-    if (!barcode.trim()) {
-      setBooksToReturn([]);
-      return;
-    }
-
-    const barcodes = barcode.split(/[\s,]+/).filter(b => b.trim() !== "");
-    if (barcodes.length === 0) {
-      setBooksToReturn([]);
-      return;
-    }
-
-    setLoading(true);
-    setErrorMsg("");
-
-    let newBooks: Book[] = [];
-    let errors: string[] = [];
-
-    for (const b of barcodes) {
-      try {
-        const res = await fetch(`${API}/book/barcode/${b.trim()}`);
-        const data = await res.json();
-        if (!res.ok) {
-          errors.push(`${b}: ${data.error || "ไม่พบหนังสือ"}`);
-          continue;
-        }
-
-        if (newBooks.some(x => x.id === data.id)) {
-          continue;
-        }
-        newBooks.push(data);
-      } catch {
-        errors.push(`${b}: เกิดข้อผิดพลาด`);
-      }
-    }
-
-    setBooksToReturn(newBooks);
-
-    if (errors.length > 0) {
-      setErrorMsg(errors.join(" | "));
-    }
-
-    setLoading(false);
+    await processScannedBarcodes(barcode);
   };
 
   const steps = [
@@ -589,15 +627,15 @@ export default function TabletPage() {
                 </div>
 
                 <div className="text-center flex-none mt-auto">
-                  <p className="text-gray-500 text-base mb-2">กรอก Barcode ของหนังสือที่ต้องการคืน</p>
+                  <p className="text-gray-500 text-base mb-2">สแกน Barcode ของหนังสือที่ต้องการคืนด้วยเครื่องอ่าน</p>
                   <input
                     id="input-check-book"
                     type="text"
-                    placeholder="Barcode หรือ รหัสหนังสือ"
+                    readOnly
+                    placeholder="รอการสแกนจากเครื่องอ่าน..."
                     value={inputBarcode}
-                    onChange={(e) => setInputBarcode(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && handleCheckBook()}
-                    className="w-full border-2 border-blue-200 rounded-2xl px-6 py-4 text-xl text-center tracking-widest mb-3 focus:outline-none focus:border-blue-500 text-gray-800"
+                    className="w-full border-2 border-blue-200 rounded-2xl px-6 py-4 text-xl text-center tracking-widest mb-3 focus:outline-none focus:border-blue-500 text-gray-800 bg-gray-50 cursor-default"
                   />
                   {errorMsg && <p className="text-red-500 text-base mb-3">{errorMsg}</p>}
                   <div className="flex gap-3">
@@ -669,7 +707,7 @@ export default function TabletPage() {
                     <p className="text-gray-700 text-lg"><span className="text-gray-400">ผู้คืน: </span>{borrower?.name}</p>
                     <p className="text-gray-700 text-lg"><span className="text-gray-400">จำนวน: </span>{booksToReturn.length} เล่ม</p>
                     <div className="pl-5 border-l-4 border-green-200 my-3 max-h-32 overflow-y-auto custom-scrollbar pr-2">
-                      {booksToReturn.map((b, i) => <p key={i} className="text-gray-700 text-lg truncate">{b.title}</p>)}
+                      {booksToReturn.map((b, i) => <p key={i} className="text-gray-700 text-lg break-words">{b.title}</p>)}
                     </div>
                     {returnTime && (
                       <p className="text-gray-700 text-lg"><span className="text-gray-400">เวลา: </span>{returnTime.toLocaleString("th-TH")}</p>
@@ -720,7 +758,7 @@ export default function TabletPage() {
                       <p className="text-green-700 font-semibold text-lg mb-2">✅ สแกนแล้ว ({booksToReturn.length} เล่ม)</p>
                       <div className="space-y-2">
                         {booksToReturn.map(b => (
-                          <div key={b.id} className="text-lg text-gray-800 border-b border-green-100 last:border-0 pb-1 truncate">
+                          <div key={b.id} className="text-lg text-gray-800 border-b border-green-100 last:border-0 pb-1 break-words">
                             {b.title}
                           </div>
                         ))}

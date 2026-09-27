@@ -72,21 +72,49 @@ func SetCabinetFull(c *fiber.Ctx) error {
 
 func GetBooksInCabinet(c *fiber.Ctx) error {
 	var records []models.BorrowRecord
-	database.DB.Preload("Book").Preload("Borrower").
+	database.DB.
 		Where("status = ? AND returned_at IS NOT NULL", "returned").
 		Order("returned_at DESC").
 		Find(&records)
 
-	bookMap := make(map[uint]fiber.Map)
+	// ดึงรายละเอียดหนังสือ (ชื่อ/ผู้แต่ง/ISBN) จากฐานข้อมูลของตัวเองมาแสดงประกอบ
+	// BorrowRecord เก็บแค่ BookBarcode ไม่มี FK ผูกกับ Book แล้ว จึงต้องมา join เอาเองตรงนี้
+	barcodes := make([]string, 0, len(records))
+	seen := map[string]bool{}
 	for _, r := range records {
-		if _, exists := bookMap[r.BookID]; !exists {
-			bookMap[r.BookID] = fiber.Map{
-				"id":          r.Book.ID,
-				"title":       r.Book.Title,
-				"author":      r.Book.Author,
-				"isbn":              r.Book.ISBN,
+		if r.BookBarcode != "" && !seen[r.BookBarcode] {
+			seen[r.BookBarcode] = true
+			barcodes = append(barcodes, r.BookBarcode)
+		}
+	}
+	var bookList []models.Book
+	if len(barcodes) > 0 {
+		database.DB.Where("barcode IN ?", barcodes).Find(&bookList)
+	}
+	bookByBarcode := make(map[string]models.Book, len(bookList))
+	for _, b := range bookList {
+		bookByBarcode[b.Barcode] = b
+	}
+
+	bookMap := make(map[string]fiber.Map)
+	for _, r := range records {
+		if _, exists := bookMap[r.BookBarcode]; !exists {
+			title, author, isbn := r.BookBarcode, "-", "-"
+			if b, ok := bookByBarcode[r.BookBarcode]; ok {
+				title = b.Title
+				author = b.Author
+				if b.ISBN != "" {
+					isbn = b.ISBN
+				}
+			}
+			bookMap[r.BookBarcode] = fiber.Map{
+				"id":                r.ID,
+				"barcode":           r.BookBarcode,
+				"title":             title,
+				"author":            author,
+				"isbn":              isbn,
 				"returned_at":       r.ReturnedAt,
-				"returned_by":       r.Borrower.Name,
+				"returned_by":       r.BorrowerCode,
 				"returned_by_phone": r.ReturnedByPhone,
 			}
 		}
@@ -101,7 +129,7 @@ func GetBooksInCabinet(c *fiber.Ctx) error {
 
 func GetRecentReturns(c *fiber.Ctx) error {
 	var records []models.BorrowRecord
-	database.DB.Preload("Book").Preload("Borrower").
+	database.DB.
 		Where("status IN ?", []string{"returned", "archived"}).
 		Order("returned_at DESC").
 		Limit(20).

@@ -1,16 +1,46 @@
 package handlers
 
 import (
+	"strconv"
+	"strings"
+
 	"smart-library-api/internal/database"
 	"smart-library-api/internal/models"
 
 	"github.com/gofiber/fiber/v2"
 )
 
+// ดึงรายการหนังสือแบบแบ่งหน้า พร้อมค้นหาได้ (ตาราง books มีหลักแสนแถวจากข้อมูลห้องสมุดจริง
+// ถ้าดึงทั้งหมดมาทีเดียวจะทำให้หน้า Admin โหลดช้ามาก/ค้าง)
 func GetBooks(c *fiber.Ctx) error {
+	page, _ := strconv.Atoi(c.Query("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+	limit, _ := strconv.Atoi(c.Query("limit", "50"))
+	if limit < 1 || limit > 200 {
+		limit = 50
+	}
+	search := strings.TrimSpace(c.Query("search", ""))
+
+	query := database.DB.Model(&models.Book{})
+	if search != "" {
+		like := "%" + search + "%"
+		query = query.Where("title ILIKE ? OR barcode ILIKE ? OR author ILIKE ? OR isbn ILIKE ?", like, like, like, like)
+	}
+
+	var total int64
+	query.Count(&total)
+
 	var books []models.Book
-	database.DB.Find(&books)
-	return c.JSON(books)
+	query.Order("id").Offset((page - 1) * limit).Limit(limit).Find(&books)
+
+	return c.JSON(fiber.Map{
+		"books": books,
+		"total": total,
+		"page":  page,
+		"limit": limit,
+	})
 }
 
 func CreateBook(c *fiber.Ctx) error {

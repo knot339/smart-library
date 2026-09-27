@@ -20,6 +20,7 @@ func Setup(app *fiber.App) {
 	app.Get("/api/status", handlers.GetStatus)
 	app.Post("/api/simulate/return-book", handlers.SimulateReturnBook)
 	app.Post("/api/simulate/reset", handlers.SimulateReset)
+	app.Post("/api/simulate/fast-mode", handlers.SetFastMode)
 
 	// เส้นทาง API สำหรับระบบกระดานควบคุม (Dashboard)
 	app.Get("/api/dashboard/cabinet", handlers.GetCabinetStatus)

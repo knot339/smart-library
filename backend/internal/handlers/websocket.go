@@ -3,13 +3,15 @@ package handlers
 import (
 	"encoding/json"
 	"log"
-	"sync"
 	"os"
+	"sync"
 	"time"
 
+	"smart-library-api/internal/hardware"
+
+	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/websocket/v2"
-	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
 
 type WSMessage struct {
@@ -29,7 +31,7 @@ func InitMQTT() {
 	opts := mqtt.NewClientOptions()
 	opts.AddBroker("tcp://smart-library-mqtt:1883")
 	opts.SetClientID("smart-library-backend")
-	
+
 	// สำหรับรันนอก Docker เพื่อทดสอบ ถ้าไม่เจอ smart-library-mqtt ให้ใช้ localhost
 	if os.Getenv("APP_MODE") != "simulation" {
 		opts.AddBroker("tcp://localhost:1883")
@@ -37,11 +39,11 @@ func InitMQTT() {
 
 	opts.OnConnect = func(c mqtt.Client) {
 		log.Println("✅ Connected to MQTT Broker")
-		
+
 		// Subscribe to receive RFID and Barcode from ESP32
 		c.Subscribe("smartlibrary/esp32/rfid", 0, func(client mqtt.Client, msg mqtt.Message) {
 			log.Printf("📡 Received from ESP32: %s", msg.Payload())
-			
+
 			// Forward to all connected tablets via WebSocket
 			clientMu.Lock()
 			defer clientMu.Unlock()
@@ -51,6 +53,17 @@ func InitMQTT() {
 					delete(tabletClients, wsClient)
 				}
 			}
+		})
+
+		// Subscribe to receive cabinet full/empty status from ESP32 (Ultrasonic sensor)
+		c.Subscribe("smartlibrary/esp32/full", 0, func(client mqtt.Client, msg mqtt.Message) {
+			var m WSMessage
+			if err := json.Unmarshal(msg.Payload(), &m); err != nil || m.Type != "full" {
+				return
+			}
+			isFull := m.Value == "true"
+			log.Printf("📡 Cabinet full status from ESP32: %v", isFull)
+			hardware.Shared.SetFull(isFull)
 		})
 	}
 	opts.OnConnectionLost = func(c mqtt.Client, err error) {
@@ -123,4 +136,3 @@ func SimulatorSend(c *fiber.Ctx) error {
 		"clients": len(tabletClients),
 	})
 }
-

@@ -44,6 +44,8 @@ services:
       - DB_PASSWORD=password123
       - DB_NAME=library
       - DB_PORT=5432
+      - OPAC_API_URL=${OPAC_API_URL}
+      - OPAC_API_TOKEN=${OPAC_API_TOKEN}
     depends_on:
       db:
         condition: service_healthy

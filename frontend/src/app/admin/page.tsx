@@ -7,8 +7,10 @@ type Book = { id: number; isbn: string; barcode: string; bibid: string; title: s
 type Borrower = { id: number; code: string; name: string; type: string; phone: string };
 type BorrowRecord = {
   id: number;
-  borrower: Borrower;
-  book: Book;
+  borrower_code: string;
+  book_barcode: string;
+  book_title: string;
+  book_author: string;
   borrowed_at: string;
   due_date: string;
   returned_at: string | null;
@@ -29,6 +31,12 @@ export default function AdminPage() {
   const [bookForm, setBookForm] = useState(emptyBook);
   const [editingBook, setEditingBook] = useState<Book | null>(null);
   const [bookModal, setBookModal] = useState(false);
+  const [bookPage, setBookPage] = useState(1);
+  const [bookTotal, setBookTotal] = useState(0);
+  const [bookSearchInput, setBookSearchInput] = useState("");
+  const [bookSearch, setBookSearch] = useState("");
+  const bookLimit = 50;
+  const bookTotalPages = Math.max(1, Math.ceil(bookTotal / bookLimit));
 
   // ---- สถานะสำหรับจัดการข้อมูลผู้ยืม ----
   const [borrowers, setBorrowers] = useState<Borrower[]>([]);
@@ -49,10 +57,29 @@ export default function AdminPage() {
   };
 
   // ---- ฟังก์ชันสำหรับดึงข้อมูลจากเซิร์ฟเวอร์ ----
-  const fetchBooks = useCallback(async () => {
-    const res = await fetch(`${API}/books`);
-    setBooks(await res.json());
+  // ตาราง books มีข้อมูลจากห้องสมุดจริงหลักแสนแถว จึงต้องดึงแบบแบ่งหน้า (page/limit)
+  // ไม่งั้นดึงทั้งหมดมาทีเดียวจะทำให้หน้า Admin โหลดช้า/ค้าง
+  const fetchBooks = useCallback(async (page: number, search: string) => {
+    const params = new URLSearchParams({ page: String(page), limit: String(bookLimit) });
+    if (search) params.set("search", search);
+    const res = await fetch(`${API}/books?${params.toString()}`);
+    const data = await res.json();
+    setBooks(data.books || []);
+    setBookTotal(data.total || 0);
   }, []);
+
+  // ดีเลย์การค้นหา 400ms หลังพิมพ์เสร็จ กันยิง request รัวทุกตัวอักษร แล้วเด้งกลับไปหน้า 1 เสมอ
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setBookSearch(bookSearchInput);
+      setBookPage(1);
+    }, 400);
+    return () => clearTimeout(t);
+  }, [bookSearchInput]);
+
+  useEffect(() => {
+    fetchBooks(bookPage, bookSearch);
+  }, [fetchBooks, bookPage, bookSearch]);
 
   const fetchBorrowers = useCallback(async () => {
     const res = await fetch(`${API}/borrowers`);
@@ -65,24 +92,23 @@ export default function AdminPage() {
   }, []);
 
   useEffect(() => {
-    fetchBooks();
     fetchBorrowers();
     fetchBorrows();
-  }, [fetchBooks, fetchBorrowers, fetchBorrows]);
+  }, [fetchBorrowers, fetchBorrows]);
 
   // ---- ฟังก์ชันสำหรับจัดการข้อมูลหนังสือ ----
   const handleSaveBook = async () => {
     const url = editingBook ? `${API}/books/${editingBook.id}` : `${API}/books`;
     const method = editingBook ? "PUT" : "POST";
     const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(bookForm) });
-    if (res.ok) { notify(editingBook ? "แก้ไขหนังสือสำเร็จ" : "เพิ่มหนังสือสำเร็จ"); setBookModal(false); fetchBooks(); }
+    if (res.ok) { notify(editingBook ? "แก้ไขหนังสือสำเร็จ" : "เพิ่มหนังสือสำเร็จ"); setBookModal(false); fetchBooks(bookPage, bookSearch); }
     else notify("เกิดข้อผิดพลาด", "error");
   };
 
   const handleDeleteBook = async (id: number) => {
     if (!confirm("ยืนยันการลบหนังสือ?")) return;
     await fetch(`${API}/books/${id}`, { method: "DELETE" });
-    notify("ลบหนังสือสำเร็จ"); fetchBooks();
+    notify("ลบหนังสือสำเร็จ"); fetchBooks(bookPage, bookSearch);
   };
 
   const openBookModal = (book?: Book) => {
@@ -165,11 +191,19 @@ export default function AdminPage() {
         {/* ===== ส่วนการแสดงผล: ข้อมูลหนังสือ ===== */}
         {tab === "books" && (
           <div>
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-lg font-bold text-gray-700">รายการหนังสือทั้งหมด ({books.length} เล่ม)</h2>
-              <button onClick={() => openBookModal()} className="bg-blue-700 hover:bg-blue-800 text-white px-5 py-2 rounded-lg font-semibold transition">
-                + เพิ่มหนังสือ
-              </button>
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 mb-4">
+              <h2 className="text-lg font-bold text-gray-700">รายการหนังสือทั้งหมด ({bookTotal.toLocaleString()} เล่ม)</h2>
+              <div className="flex gap-3 w-full md:w-auto">
+                <input
+                  value={bookSearchInput}
+                  onChange={e => setBookSearchInput(e.target.value)}
+                  placeholder="ค้นหาชื่อ, ผู้แต่ง หรือ Barcode..."
+                  className="flex-1 md:w-72 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 transition"
+                />
+                <button onClick={() => openBookModal()} className="bg-blue-700 hover:bg-blue-800 text-white px-5 py-2 rounded-lg font-semibold transition whitespace-nowrap">
+                  + เพิ่มหนังสือ
+                </button>
+              </div>
             </div>
             <div className="bg-white rounded-xl shadow overflow-hidden">
               <table className="w-full text-sm">
@@ -182,7 +216,7 @@ export default function AdminPage() {
                 </thead>
                 <tbody>
                   {books.length === 0 && (
-                    <tr><td colSpan={6} className="text-center py-8 text-gray-400">ยังไม่มีข้อมูลหนังสือ</td></tr>
+                    <tr><td colSpan={6} className="text-center py-8 text-gray-400">{bookSearch ? "ไม่พบหนังสือที่ค้นหา" : "ยังไม่มีข้อมูลหนังสือ"}</td></tr>
                   )}
                   {books.map((b, i) => (
                     <tr key={b.id} className={i % 2 === 0 ? "bg-white" : "bg-gray-50"}>
@@ -200,6 +234,27 @@ export default function AdminPage() {
                 </tbody>
               </table>
             </div>
+
+            {/* แถบเปลี่ยนหน้า */}
+            {bookTotalPages > 1 && (
+              <div className="flex justify-center items-center gap-3 mt-4">
+                <button
+                  onClick={() => setBookPage(p => Math.max(1, p - 1))}
+                  disabled={bookPage <= 1}
+                  className="px-4 py-2 rounded-lg bg-white shadow text-sm font-semibold text-gray-700 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-50 transition"
+                >
+                  ← ก่อนหน้า
+                </button>
+                <span className="text-sm text-gray-500">หน้า {bookPage} จาก {bookTotalPages}</span>
+                <button
+                  onClick={() => setBookPage(p => Math.min(bookTotalPages, p + 1))}
+                  disabled={bookPage >= bookTotalPages}
+                  className="px-4 py-2 rounded-lg bg-white shadow text-sm font-semibold text-gray-700 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-gray-50 transition"
+                >
+                  ถัดไป →
+                </button>
+              </div>
+            )}
           </div>
         )}
 
@@ -260,7 +315,7 @@ export default function AdminPage() {
               <table className="w-full text-sm">
                 <thead className="bg-blue-50 text-blue-900">
                   <tr>
-                    {["ผู้ยืม", "หนังสือ", "วันที่ยืม", "กำหนดคืน", "วันที่คืน", "เบอร์โทรผู้คืน", "สถานะ", "จัดการ"].map(h => (
+                    {["รหัสผู้ยืม", "หนังสือ", "วันที่ยืม", "กำหนดคืน", "วันที่คืน", "เบอร์โทรผู้คืน", "สถานะ", "จัดการ"].map(h => (
                       <th key={h} className="px-4 py-3 text-left font-semibold">{h}</th>
                     ))}
                   </tr>
@@ -271,8 +326,8 @@ export default function AdminPage() {
                   )}
                   {borrows.map((r, i) => (
                     <tr key={r.id} className={`${i % 2 === 0 ? "bg-white" : "bg-gray-50"} ${isOverdue(r.due_date, r.status) ? "border-l-4 border-red-400" : ""}`}>
-                      <td className="px-4 py-3 font-medium text-gray-800">{r.borrower?.name || "-"}<br /><span className="text-gray-400 text-xs">{r.borrower?.code}</span></td>
-                      <td className="px-4 py-3 text-gray-700">{r.book?.title || "-"}</td>
+                      <td className="px-4 py-3 font-medium text-gray-800 font-mono">{r.borrower_code || "-"}</td>
+                      <td className="px-4 py-3 text-gray-700">{r.book_title || "-"}<br /><span className="text-gray-400 text-xs font-mono">{r.book_barcode}</span></td>
                       <td className="px-4 py-3 text-gray-500">{fmtDate(r.borrowed_at)}</td>
                       <td className={`px-4 py-3 font-medium ${isOverdue(r.due_date, r.status) ? "text-red-600" : "text-gray-700"}`}>
                         {fmtDate(r.due_date)}{isOverdue(r.due_date, r.status) && " ⚠️"}

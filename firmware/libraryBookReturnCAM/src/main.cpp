@@ -11,10 +11,7 @@
 #include "FS.h"
 #include <time.h>
 #include <vector>
-
-// TODO: ใส่ข้อมูล WiFi ของคุณ
-const char* ssid = "P-Hot";
-const char* password = "12345678";
+#include "secrets.h"
 
 #define PART_BOUNDARY "123456789000000000000987654321"
 static const char* _STREAM_CONTENT_TYPE = "multipart/x-mixed-replace;boundary=" PART_BOUNDARY;
@@ -743,6 +740,45 @@ void startRecordingsServer() {
 // การโหลดไฟล์วิดีโอเป็น request ที่ใช้เวลานาน/ค้างได้ง่าย (ไฟล์ใหญ่ หรือเบราว์เซอร์บางตัว
 // พยายาม preview ไฟล์ AVI ที่เล่นไม่ได้แล้วค้าง connection ไว้) ถ้าแชร์ instance กับ
 // /recordings จะไปบล็อก list เหมือนที่สตรีมสดเคยบล็อกมาก่อน จึงต้องแยกพอร์ตเด็ดขาด
+// สแกนหา WIFI_SSID ซ้ำ ๆ ก่อนเชื่อมต่อ เผื่อ AP ยังไม่ขึ้น/ติดต่อไม่ได้ตอนบูต
+// จะวนสแกน + ลองเชื่อมต่อไปเรื่อย ๆ จนกว่าจะสำเร็จ
+void connectWiFi() {
+  WiFi.mode(WIFI_STA);
+  int attempt = 0;
+
+  while (WiFi.status() != WL_CONNECTED) {
+    attempt++;
+    Serial.printf("Scanning for WiFi \"%s\" (attempt %d)...\n", WIFI_SSID, attempt);
+
+    int n = WiFi.scanNetworks();
+    bool found = false;
+    for (int i = 0; i < n; i++) {
+      if (WiFi.SSID(i) == WIFI_SSID) found = true;
+    }
+    WiFi.scanDelete();
+
+    if (!found) {
+      Serial.println("Target SSID not in range, rescanning in 3s...");
+      delay(3000);
+      continue;
+    }
+
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    unsigned long start = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - start < 10000) {
+      delay(500);
+      Serial.print(".");
+    }
+    Serial.println();
+
+    if (WiFi.status() != WL_CONNECTED) {
+      Serial.println("Connect attempt timed out, rescanning...");
+    }
+  }
+
+  Serial.println("WiFi connected");
+}
+
 void startFileServer() {
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
   config.server_port = 83;
@@ -766,6 +802,9 @@ void setup() {
 
   Serial.begin(115200);
   Serial.setDebugOutput(false);
+
+  Serial.print("MAC Address: ");
+  Serial.println(WiFi.macAddress());
 
   sdMutex = xSemaphoreCreateMutex();
   gFrame.mutex = xSemaphoreCreateMutex();
@@ -825,13 +864,7 @@ void setup() {
   }
 
   // Wi-Fi connection
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.println("");
-  Serial.println("WiFi connected");
+  connectWiFi();
 
   // ต้องได้เวลาปัจจุบันมาก่อนตั้งชื่อไฟล์วิดีโอ (YYYYMMDD_HHMMSS)
   configTime(gmtOffsetSec, daylightOffsetSec, ntpServer);
