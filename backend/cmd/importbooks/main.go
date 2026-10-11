@@ -7,6 +7,7 @@
 //	go run ./cmd/importbooks "path/to/รายงานรายการทรัพยากรทั้งหมด (ITEM).xlsx"
 //
 // ต้องตั้งค่า environment variables เดียวกับตอนรัน backend (DB_HOST, DB_USER, DB_PASSWORD, DB_NAME, DB_PORT)
+// ถ้าไม่อยากตั้งเองทุกครั้ง ให้สร้างไฟล์ backend/.env ไว้ (ดู backend/.env.example) เครื่องมือนี้จะโหลดให้อัตโนมัติ
 package main
 
 import (
@@ -17,6 +18,7 @@ import (
 	"smart-library-api/internal/database"
 	"smart-library-api/internal/models"
 
+	"github.com/joho/godotenv"
 	"github.com/xuri/excelize/v2"
 	"gorm.io/gorm/clause"
 )
@@ -28,6 +30,10 @@ func main() {
 		log.Fatal("วิธีใช้: go run ./cmd/importbooks <path-to-xlsx>")
 	}
 	path := os.Args[1]
+
+	// โหลดค่าจาก backend/.env มาตั้งเป็น environment variable ให้ ถ้ามีไฟล์นี้อยู่ (ไม่มีก็ไม่เป็นไร
+	// ข้ามไปเฉยๆ แล้วใช้ค่าที่ตั้งไว้ใน environment ของเครื่อง/terminal เองตามปกติ)
+	_ = godotenv.Load()
 
 	f, err := excelize.OpenFile(path)
 	if err != nil {
