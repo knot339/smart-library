@@ -13,6 +13,16 @@
 #include <vector>
 #include "secrets.h"
 
+// ===== Static IP =====
+// กัน IP เปลี่ยนไปมาเวลา DHCP แจกใหม่ — ตัว IP ของบอร์ดนี้ (CAMERA_STATIC_IP) อยู่ใน secrets.h แทน
+// เพราะโค้ดไฟล์นี้ใช้ร่วมกันทั้งกล้องหน้าตู้และกล้องในตู้ (คนละบอร์ด แต่ build จากโค้ดเดียวกัน)
+// ส่วน Gateway/Subnet/DNS เป็นของเครือข่ายเดียวกันทั้งระบบ เลยเป็นค่าคงที่ใช้ร่วมได้ที่นี่
+// *** เปลี่ยนเครือข่าย ต้องแก้ทั้ง GATEWAY_IP/DNS1_IP ที่นี่ และ CAMERA_STATIC_IP ใน secrets.h ของทุกบอร์ด ***
+IPAddress GATEWAY_IP(10, 94, 111, 167); // ยืนยันจาก ipconfig จริงบน hotspot "P-Hot"
+IPAddress SUBNET_MASK(255, 255, 255, 0);
+IPAddress DNS1_IP(10, 94, 111, 167);
+IPAddress DNS2_IP(8, 8, 8, 8);
+
 #define PART_BOUNDARY "123456789000000000000987654321"
 static const char* _STREAM_CONTENT_TYPE = "multipart/x-mixed-replace;boundary=" PART_BOUNDARY;
 static const char* _STREAM_BOUNDARY = "\r\n--" PART_BOUNDARY "\r\n";
@@ -744,6 +754,13 @@ void startRecordingsServer() {
 // จะวนสแกน + ลองเชื่อมต่อไปเรื่อย ๆ จนกว่าจะสำเร็จ
 void connectWiFi() {
   WiFi.mode(WIFI_STA);
+
+  // ตั้ง static IP ก่อน begin() เสมอ กัน DHCP แจก IP ใหม่ไปมา (ต้องตรงกับ subnet ของเครือข่ายที่ใช้จริง)
+  // CAMERA_STATIC_IP มาจาก secrets.h ของบอร์ดนี้โดยเฉพาะ (กล้องหน้าตู้/ในตู้ ต้องตั้งคนละค่ากัน)
+  if (!WiFi.config(CAMERA_STATIC_IP, GATEWAY_IP, SUBNET_MASK, DNS1_IP, DNS2_IP)) {
+    Serial.println("[WiFi] ตั้ง static IP ไม่สำเร็จ");
+  }
+
   int attempt = 0;
 
   while (WiFi.status() != WL_CONNECTED) {
@@ -847,6 +864,14 @@ void setup() {
   if (err != ESP_OK) {
     Serial.printf("Camera init failed with error 0x%x", err);
     return;
+  }
+
+  // กล้องติดตั้งกลับหัวจริง (หมุน 180 องศา) เลยต้องกลับทั้งแนวตั้งและแนวนอนเพื่อให้ภาพตรง
+  // ถ้าติดตั้งใหม่แล้วภาพกลับแค่แนวเดียว ให้คอมเมนต์อีกบรรทัดออก เหลือไว้บรรทัดเดียวพอ
+  sensor_t *camSensor = esp_camera_sensor_get();
+  if (camSensor != nullptr) {
+    camSensor->set_vflip(camSensor, 1);
+    camSensor->set_hmirror(camSensor, 1);
   }
 
   // Init SD card (โหมด 1-bit เพราะ GPIO4/12/13 ชนกับพินกล้องบนบอร์ด AI-Thinker)

@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { API_BASE_URL as API } from "../../lib/config";
 
 // ---- ประเภทข้อมูลที่ใช้ภายในระบบ (Types) ----
@@ -8,6 +8,7 @@ type Borrower = { id: number; code: string; name: string; type: string; phone: s
 type BorrowRecord = {
   id: number;
   borrower_code: string;
+  borrower_name: string;
   book_barcode: string;
   book_title: string;
   book_author: string;
@@ -48,6 +49,7 @@ export default function AdminPage() {
   const [borrows, setBorrows] = useState<BorrowRecord[]>([]);
   const [borrowForm, setBorrowForm] = useState(emptyBorrow);
   const [borrowModal, setBorrowModal] = useState(false);
+  const [borrowSearch, setBorrowSearch] = useState("");
 
   const [msg, setMsg] = useState({ text: "", type: "" });
 
@@ -160,6 +162,19 @@ export default function AdminPage() {
   const fmtDate = (d: string) => d ? new Date(d).toLocaleDateString("th-TH") : "-";
   const isOverdue = (due: string, status: string) => status === "borrowed" && new Date(due) < new Date();
 
+  // ค้นหารายการยืม-คืนฝั่ง client (จำนวนรายการไม่มากพอจะต้องแบ่งหน้า/ค้นหาฝั่ง backend แบบตาราง books)
+  const filteredBorrows = useMemo(() => {
+    const q = borrowSearch.trim().toLowerCase();
+    if (!q) return borrows;
+    return borrows.filter(r =>
+      (r.borrower_code || "").toLowerCase().includes(q) ||
+      (r.borrower_name || "").toLowerCase().includes(q) ||
+      (r.book_title || "").toLowerCase().includes(q) ||
+      (r.book_barcode || "").toLowerCase().includes(q) ||
+      (r.returned_by_phone || "").toLowerCase().includes(q)
+    );
+  }, [borrows, borrowSearch]);
+
   return (
     <div className="min-h-screen bg-gray-100">
 
@@ -178,7 +193,7 @@ export default function AdminPage() {
 
       {/* ส่วนการสลับแท็บแสดงข้อมูล (Tabs) */}
       <div className="bg-white border-b flex px-8">
-        {([["books", "📚 หนังสือ"], ["borrowers", "👤 ผู้ยืม"], ["borrows", "📋 รายการยืม-คืน"]] as [Tab, string][]).map(([key, label]) => (
+        {([["books", "📚 หนังสือ"], ["borrowers", "👤 ผู้ยืม"], ["borrows", "📋 รายการคืน"]] as [Tab, string][]).map(([key, label]) => (
           <button key={key} onClick={() => setTab(key)}
             className={`px-6 py-4 font-semibold border-b-2 transition ${tab === key ? "border-blue-700 text-blue-700" : "border-transparent text-gray-500 hover:text-gray-700"}`}>
             {label}
@@ -305,33 +320,38 @@ export default function AdminPage() {
         {/* ===== ส่วนการแสดงผล: รายการยืม-คืน ===== */}
         {tab === "borrows" && (
           <div>
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-lg font-bold text-gray-700">รายการยืม-คืนทั้งหมด ({borrows.length} รายการ)</h2>
-              <button onClick={() => setBorrowModal(true)} className="bg-blue-700 hover:bg-blue-800 text-white px-5 py-2 rounded-lg font-semibold transition">
-                + บันทึกการยืม
-              </button>
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 mb-4">
+              <h2 className="text-lg font-bold text-gray-700">รายการคืนทั้งหมด ({filteredBorrows.length.toLocaleString()} / {borrows.length.toLocaleString()} รายการ)</h2>
+              <div className="flex gap-3 w-full md:w-auto">
+                <input
+                  value={borrowSearch}
+                  onChange={e => setBorrowSearch(e.target.value)}
+                  placeholder="ค้นหารหัส, ชื่อผู้ยืม, ชื่อหนังสือ หรือ Barcode..."
+                  className="flex-1 md:w-72 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 transition"
+                />
+                <button onClick={() => setBorrowModal(true)} className="bg-blue-700 hover:bg-blue-800 text-white px-5 py-2 rounded-lg font-semibold transition whitespace-nowrap">
+                  + บันทึกการยืม
+                </button>
+              </div>
             </div>
             <div className="bg-white rounded-xl shadow overflow-hidden">
               <table className="w-full text-sm">
                 <thead className="bg-blue-50 text-blue-900">
                   <tr>
-                    {["รหัสผู้ยืม", "หนังสือ", "วันที่ยืม", "กำหนดคืน", "วันที่คืน", "เบอร์โทรผู้คืน", "สถานะ", "จัดการ"].map(h => (
+                    {["รหัสผู้ยืม", "ชื่อผู้ยืม/คืน", "หนังสือ", "วันที่คืน", "เบอร์โทรผู้คืน", "สถานะ", "จัดการ"].map(h => (
                       <th key={h} className="px-4 py-3 text-left font-semibold">{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {borrows.length === 0 && (
-                    <tr><td colSpan={8} className="text-center py-8 text-gray-400">ยังไม่มีรายการยืม-คืน</td></tr>
+                  {filteredBorrows.length === 0 && (
+                    <tr><td colSpan={7} className="text-center py-8 text-gray-400">{borrowSearch ? "ไม่พบรายการที่ค้นหา" : "ยังไม่มีรายการคืน"}</td></tr>
                   )}
-                  {borrows.map((r, i) => (
+                  {filteredBorrows.map((r, i) => (
                     <tr key={r.id} className={`${i % 2 === 0 ? "bg-white" : "bg-gray-50"} ${isOverdue(r.due_date, r.status) ? "border-l-4 border-red-400" : ""}`}>
                       <td className="px-4 py-3 font-medium text-gray-800 font-mono">{r.borrower_code || "-"}</td>
+                      <td className="px-4 py-3 text-gray-700">{r.borrower_name || "-"}</td>
                       <td className="px-4 py-3 text-gray-700">{r.book_title || "-"}<br /><span className="text-gray-400 text-xs font-mono">{r.book_barcode}</span></td>
-                      <td className="px-4 py-3 text-gray-500">{fmtDate(r.borrowed_at)}</td>
-                      <td className={`px-4 py-3 font-medium ${isOverdue(r.due_date, r.status) ? "text-red-600" : "text-gray-700"}`}>
-                        {fmtDate(r.due_date)}{isOverdue(r.due_date, r.status) && " ⚠️"}
-                      </td>
                       <td className="px-4 py-3 text-gray-500">{r.returned_at ? fmtDate(r.returned_at) : "-"}</td>
                       <td className="px-4 py-3 text-gray-600 font-mono">{r.returned_by_phone || "-"}</td>
                       <td className="px-4 py-3">

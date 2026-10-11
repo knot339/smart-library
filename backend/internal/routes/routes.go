@@ -21,6 +21,7 @@ func Setup(app *fiber.App) {
 	app.Post("/api/simulate/return-book", handlers.SimulateReturnBook)
 	app.Post("/api/simulate/reset", handlers.SimulateReset)
 	app.Post("/api/simulate/fast-mode", handlers.SetFastMode)
+	app.Post("/api/simulate/force-empty", handlers.SetForceEmpty)
 
 	// เส้นทาง API สำหรับระบบกระดานควบคุม (Dashboard)
 	app.Get("/api/dashboard/cabinet", handlers.GetCabinetStatus)

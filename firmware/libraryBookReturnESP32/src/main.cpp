@@ -7,6 +7,15 @@
 // ===== WiFi & MQTT =====
 const int   MQTT_PORT     = 1883;
 
+// ===== Static IP (วง Hotspot มือถือ 10.94.111.x) =====
+// กัน IP เปลี่ยนไปมาเวลา DHCP แจกใหม่ — ถ้าเปลี่ยนไปใช้ Hotspot/เครือข่ายอื่น ต้องแก้เลขพวกนี้ให้ตรงกับ
+// subnet ใหม่ด้วย (เช็คจาก Default Gateway/Subnet Mask ตอนคอม server ต่อเครือข่ายนั้นๆ)
+IPAddress STATIC_IP(10, 94, 111, 101);
+IPAddress GATEWAY_IP(10, 94, 111, 167); // ยืนยันจาก ipconfig จริงบน hotspot "P-Hot"
+IPAddress SUBNET_MASK(255, 255, 255, 0);
+IPAddress DNS1_IP(10, 94, 111, 167);
+IPAddress DNS2_IP(8, 8, 8, 8);
+
 // ===== RFID (Serial2) =====
 #define RXD2 16
 #define TXD2 17
@@ -27,7 +36,7 @@ const unsigned long timeoutGap = 25;
 // ===== Ultrasonic (HC-SR04) ตรวจจับตู้เต็ม =====
 #define ULTRASONIC_TRIG_PIN 12
 #define ULTRASONIC_ECHO_PIN 13
-const int ULTRASONIC_FULL_DISTANCE_CM = 30;      // ระยะที่ถือว่าตู้เต็ม (ปรับตามตำแหน่งติดตั้งจริง)
+const int ULTRASONIC_FULL_DISTANCE_CM = 70;      // ระยะที่ถือว่าตู้เต็ม (ปรับตามตำแหน่งติดตั้งจริง)
 const unsigned long ULTRASONIC_CHECK_INTERVAL = 1000; // เช็คระยะทุก 1 วินาที
 const int ULTRASONIC_CONFIRM_COUNT = 3;          // ต้องอ่านค่าเข้าเงื่อนไขติดกันกี่ครั้งก่อนยืนยันเปลี่ยนสถานะ (กันค่าอ่านเพี้ยน/หนังสือขยับผ่าน)
 
@@ -60,6 +69,11 @@ bool isMotorRunning = false;
 unsigned long lastMqttReconnectAttempt = 0;
 unsigned long lastWifiRetryTime = 0;
 
+// ไฟกะพริบตอน boot: กะพริบจนกว่าจะต่อ MQTT server สำเร็จครั้งแรก แล้วดับค้างไว้
+bool bootLedBlinking = true;
+bool bootLedState = false;
+unsigned long lastBootBlinkToggle = 0;
+
 // ----- ฟังก์ชันควบคุมมอเตอร์ -----
 void motorStop() {
   analogWrite(MOTOR_RPWM, 0);
@@ -76,6 +90,17 @@ void motorBackward(int spd) {
   analogWrite(MOTOR_LPWM, spd);
 }
 // -----------------------------------
+
+// เรียกซ้ำๆ ได้ทั้งใน setup() (ระหว่าง delay แบบ chunk) และ loop() เพื่อกะพริบไฟแบบไม่บล็อก
+void bootBlinkTick() {
+  if (!bootLedBlinking) return;
+  unsigned long now = millis();
+  if (now - lastBootBlinkToggle >= 200) {
+    lastBootBlinkToggle = now;
+    bootLedState = !bootLedState;
+    digitalWrite(LED_PIN, bootLedState ? HIGH : LOW);
+  }
+}
 
 WiFiClient espClient;
 PubSubClient mqtt(espClient);
@@ -108,9 +133,9 @@ void publishFullStatus(bool full) {
 // อ่านค่าระยะและตัดสินใจสถานะตู้เต็ม เรียกจาก loop() แบบไม่บล็อกทุก ULTRASONIC_CHECK_INTERVAL
 void checkCabinetFull() {
   long dist = readUltrasonicDistanceCm();
-  // dist < 0 คือไม่มี echo กลับมาภายใน timeout ซึ่งแปลว่าไม่มีอะไรอยู่ใกล้ๆ (ตู้ว่าง)
-  // ไม่ใช่ "อ่านค่าไม่ได้" ต้องนับเป็นค่าว่างด้วย ไม่งั้นถ้าเกิดซ้ำๆ ตอนตู้ว่าง สถานะจะค้างเป็นเต็มตลอดไป
-  bool isFullReading = dist >= 0 && dist <= ULTRASONIC_FULL_DISTANCE_CM;
+  if (dist < 0) return; // อ่านค่าไม่ได้ในรอบนี้ ข้ามไปก่อน
+
+  bool isFullReading = dist <= ULTRASONIC_FULL_DISTANCE_CM;
   if (isFullReading) {
     fullReadingStreak++;
     emptyReadingStreak = 0;
@@ -230,14 +255,21 @@ void callback(char* topic, byte* payload, unsigned int length) {
   }
 }
 
+// ใช้ Last Will/Testament บอก backend ว่า ESP32 นี้หลุดการเชื่อมต่อ (ไม่ว่าจะปิดเครื่อง/สัญญาณหลุด/ค้าง)
+// broker จะส่ง willMessage นี้ให้ผู้ subscribe topic เดียวกันเองอัตโนมัติทันทีที่ตรวจพบว่า client หลุด
+// (retain=true กันเหตุ backend restart พลาดข้อความไปตอนที่ ESP32 หลุดไปก่อนแล้ว จะอ่านค่าล่าสุดได้ทันทีที่ subscribe ใหม่)
+const char* STATUS_TOPIC = "smartlibrary/esp32/status";
+
 void reconnect() {
   Serial.print("[MQTT] Attempting connection...");
   String clientId = "ESP32Client-";
   clientId += String(random(0xffff), HEX);
-  if (mqtt.connect(clientId.c_str())) {
+  if (mqtt.connect(clientId.c_str(), STATUS_TOPIC, 0, true, "offline")) {
     Serial.println(" connected");
     mqtt.subscribe("smartlibrary/esp32/control");
+    mqtt.publish(STATUS_TOPIC, "online", true); // บอก backend ว่าออนไลน์แล้ว (retain ไว้เหมือนกัน)
     publishFullStatus(cabinetFull); // ส่งสถานะตู้ปัจจุบันซ้ำ เผื่อ backend หลุด MQTT ไปช่วงที่ผ่านมา
+    bootLedBlinking = false; // ต่อ server สำเร็จครั้งแรกแล้ว หยุดกะพริบไฟบอกสถานะ boot ถาวร
     digitalWrite(LED_PIN, HIGH);
     delay(200);
     digitalWrite(LED_PIN, LOW);
@@ -274,20 +306,34 @@ void setup() {
   // Calibrate ตำแหน่งมอเตอร์ทุกครั้งที่เปิดเครื่อง: เดินหน้าสุดไป Close (ยืดสุด) เป็นจุดอ้างอิง
   Serial.println("[MOTOR] Calibrating to CLOSE on boot...");
   motorForward(motorSpeed);
-  delay(MAX_DURATION);
+  unsigned long calStart = millis();
+  while (millis() - calStart < MAX_DURATION) {
+    bootBlinkTick();
+    delay(10);
+  }
   motorStop();
   currentPos = 2; // Close (ยืดสุด)
   Serial.println("[MOTOR] Calibration done, at CLOSE");
 
   WiFi.mode(WIFI_STA);
 
+  // ตั้ง static IP ก่อน begin() เสมอ กัน DHCP แจก IP ใหม่ไปมา (ต้องตรงกับ subnet ของเครือข่ายที่ใช้จริง)
+  if (!WiFi.config(STATIC_IP, GATEWAY_IP, SUBNET_MASK, DNS1_IP, DNS2_IP)) {
+    Serial.println("[WiFi] ตั้ง static IP ไม่สำเร็จ");
+  }
+
   Serial.printf("WiFi SSID: %s ", WIFI_SSID);
   Serial.printf("Connecting to Router: %s", WIFI_SSID);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   unsigned long connectStart = millis();
+  unsigned long lastDot = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - connectStart < 10000) {
-    delay(500);
-    Serial.print(".");
+    bootBlinkTick();
+    if (millis() - lastDot >= 500) {
+      lastDot = millis();
+      Serial.print(".");
+    }
+    delay(10);
   }
   Serial.println();
   if (WiFi.status() == WL_CONNECTED) {
@@ -299,6 +345,9 @@ void setup() {
   Serial.printf("MQTT Server: %s:%d\n", MQTT_SERVER, MQTT_PORT);
   mqtt.setServer(MQTT_SERVER, MQTT_PORT);
   mqtt.setCallback(callback);
+  // ลด keepalive จาก default 15 วินาทีเหลือ 5 วินาที — สงสัยว่า NAT ของ hotspot มือถือ timeout
+  // connection ที่ "เงียบ" เร็วกว่า 15 วินาที ทำให้หลุดก่อนที่จะได้ส่ง ping รอบถัดไป ลองส่งถี่ขึ้นดูก่อน
+  mqtt.setKeepAlive(5);
 
   Serial.println("--- RFID + Motor + MQTT ready ---");
 }
@@ -306,10 +355,12 @@ void setup() {
 void loop() {
   unsigned long currentTime = millis();
 
+  bootBlinkTick(); // กะพริบไฟต่อเนื่องจนกว่าจะต่อ MQTT server สำเร็จครั้งแรก (ไม่บล็อก)
+
   if (WiFi.status() != WL_CONNECTED) {
     if (currentTime - lastWifiRetryTime > 30000 || lastWifiRetryTime == 0) {
       lastWifiRetryTime = currentTime;
-      Serial.printf("[WiFi] Reconnecting... SSID: %s  Password: %s\n", WIFI_SSID, WIFI_PASSWORD);
+      Serial.printf("[WiFi] Reconnecting... SSID: %s\n", WIFI_SSID);
       WiFi.reconnect();
     }
   } else if (!mqtt.connected()) {

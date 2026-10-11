@@ -6,7 +6,8 @@ import { API_BASE_URL as API, CAMERA_FRONT_URL, CAMERA_INSIDE_URL, CAMERA_FRONT_
 type MotorStatus = "closed" | "open" | "dump";
 type BookInCabinet = {
     id: number; title: string; author: string;
-    isbn: string; barcode: string; returned_at: string; returned_by: string; returned_by_phone?: string;
+    isbn: string; barcode: string; returned_at: string;
+    returned_by: string; returned_by_name?: string; returned_by_phone?: string;
 };
 
 
@@ -274,22 +275,6 @@ export default function DashboardPage() {
                     <p className="text-gray-400 text-xs mt-3 text-center">
                         ⚠️ ตรวจสอบให้แน่ใจก่อนสั่งงานมอเตอร์ทุกครั้ง
                     </p>
-
-                    {/* ส่วนการดำเนินการล้างข้อมูลรายการหนังสือและความจุตู้รับคืน */}
-                    <div className="mt-4 border-t pt-4">
-                        <div className="flex items-center justify-between">
-                            <div>
-                                <p className="text-sm font-semibold text-gray-700">🗂️ รีเซ็ตรายการในตู้</p>
-                                <p className="text-xs text-gray-400">ใช้หลังจากเก็บหนังสือออกจากตู้แล้ว จะล้างรายการและความจุกลับเป็น 0</p>
-                            </div>
-                            <button
-                                onClick={() => setConfirmReset(true)}
-                                className="bg-red-500 hover:bg-red-600 text-white font-bold px-5 py-2 rounded-xl transition active:scale-95 whitespace-nowrap ml-4"
-                            >
-                                🗑️ รีเซ็ตรายการ
-                            </button>
-                        </div>
-                    </div>
                 </div>
 
                 {/* ส่วนการแสดงภาพจากกล้องวงจรปิด */}
@@ -471,16 +456,23 @@ export default function DashboardPage() {
 
                 {/* ส่วนการแสดงผลข้อมูลรายการในตู้ */}
                 <div className="bg-white rounded-xl shadow overflow-hidden">
-                    <div className="bg-blue-50 px-6 py-4 border-b text-blue-900 font-bold">
-                        📦 หนังสือในตู้ ({booksInCabinet.length} เล่ม)
+                    <div className="bg-blue-50 px-6 py-4 border-b flex items-center justify-between gap-4">
+                        <span className="text-blue-900 font-bold">📦 หนังสือในตู้ ({booksInCabinet.length} เล่ม)</span>
+                        <button
+                            onClick={() => setConfirmReset(true)}
+                            className="bg-red-500 hover:bg-red-600 text-white font-bold px-4 py-2 rounded-xl transition active:scale-95 whitespace-nowrap text-sm"
+                            title="ใช้หลังจากเก็บหนังสือออกจากตู้แล้ว จะล้างรายการและความจุกลับเป็น 0"
+                        >
+                            🗑️ รีเซ็ตรายการในตู้
+                        </button>
                     </div>
 
                     <div className="overflow-x-auto">
                         {booksInCabinet.length === 0
                             ? <div className="text-center py-12 text-gray-400"><p className="text-4xl mb-2">📭</p><p>ไม่มีหนังสือในตู้ขณะนี้</p></div>
-                            : <table className="w-full text-sm min-w-[600px]">
+                            : <table className="w-full text-sm min-w-[700px]">
                                 <thead className="bg-blue-50 text-blue-900">
-                                    <tr>{["ชื่อหนังสือ", "ผู้แต่ง", "Barcode / ISBN", "คืนเมื่อ", "คืนโดย"].map(h => (
+                                    <tr>{["ชื่อหนังสือ", "ผู้แต่ง", "Barcode / ISBN", "คืนเมื่อ", "เลขผู้คืน", "ชื่อผู้คืน"].map(h => (
                                         <th key={h} className="px-4 py-3 text-left font-semibold">{h}</th>
                                     ))}</tr>
                                 </thead>
@@ -491,7 +483,8 @@ export default function DashboardPage() {
                                             <td className="px-4 py-3 text-gray-600">{b.author}</td>
                                             <td className="px-4 py-3 font-mono text-gray-400 text-xs">{b.barcode}<br/>{b.isbn}</td>
                                             <td className="px-4 py-3 text-gray-500">{fmtDate(b.returned_at)}</td>
-                                            <td className="px-4 py-3 text-gray-600 font-mono">{b.returned_by_phone || b.returned_by}</td>
+                                            <td className="px-4 py-3 text-gray-600 font-mono">{b.returned_by_phone || b.returned_by || "-"}</td>
+                                            <td className="px-4 py-3 text-gray-600">{b.returned_by_name || "-"}</td>
                                         </tr>
                                     ))}
                                 </tbody>

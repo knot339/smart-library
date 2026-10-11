@@ -12,6 +12,7 @@ export default function SimulatorPage() {
   const [connectedClients, setConnectedClients] = useState(0);
   const [ledOn, setLedOn] = useState(false); // ใช้สำหรับทดสอบการเชื่อมต่อกับอุปกรณ์ ESP32
   const [fastMode, setFastMode] = useState(false);
+  const [forceEmpty, setForceEmpty] = useState(false);
 
   useEffect(() => {
     const fetchStatus = async () => {
@@ -21,6 +22,7 @@ export default function SimulatorPage() {
         setIsFull(data.is_full);
         setMotorLogs(data.motor_logs || []); // ดึงข้อมูลประวัติการทำงาน (log) ของมอเตอร์จาก Backend
         setFastMode(data.fast_mode || false);
+        setForceEmpty(data.force_empty || false);
       } catch (err) {
         console.error("Fetch status error:", err);
       }
@@ -94,6 +96,24 @@ export default function SimulatorPage() {
     }
   };
 
+  // ใช้ตอนยังไม่ได้ต่อเซนเซอร์ Ultrasonic จริง — ขา ECHO ที่ลอยจะสุ่มขึ้นเต็ม/ว่างสลับไปมาเอง
+  // เปิดโหมดนี้ไว้ก่อนเพื่อบังคับสถานะตู้ว่างเสมอ จนกว่าจะต่อเซนเซอร์จริงแล้วค่อยปิด
+  const toggleForceEmpty = async (force: boolean) => {
+    try {
+      const res = await fetch(`${API}/simulate/force-empty`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ force_empty: force }),
+      });
+      const data = await res.json();
+      setForceEmpty(force);
+      setIsFull(data.is_full);
+      addLog(force ? "🔌 เปิดโหมดไม่ได้ต่อ Ultrasonic (บังคับตู้ว่าง) แล้ว" : "🔌 ปิดโหมดบังคับตู้ว่างแล้ว");
+    } catch {
+      addLog("❌ ตั้งค่าโหมดบังคับตู้ว่างไม่สำเร็จ");
+    }
+  };
+
   // นำประวัติการทำงาน (Log) ทั้งสองแหล่งมารวมกัน เรียงจากเก่าไปใหม่ (บนลงล่างแบบ Terminal/cmd)
   // motorLogs จาก backend เก็บแบบใหม่ไปเก่า (prepend) จึงต้อง reverse ก่อนต่อท้าย log ฝั่ง frontend
   const allLogs = [...log, ...[...motorLogs].reverse()];
@@ -161,7 +181,7 @@ export default function SimulatorPage() {
           <div className="flex justify-between items-center">
             <div>
               <h2 className="font-semibold mb-1">🚀 ระบบทดลอง (Fast Mode)</h2>
-              <p className="text-gray-400 text-xs">ข้ามดีเลย์มอเตอร์เพื่อทดสอบแอปพลิเคชันอย่างรวดเร็ว (ไม่ต้องต่อ ESP32)</p>
+              <p className="text-gray-400 text-xs">ข้ามดีเลย์มอเตอร์ + ข้ามการเช็คว่าต่อ ESP32 อยู่ไหม เพื่อทดสอบหน้าการคืนหนังสือทั้งหมดได้โดยไม่ต้องต่อ ESP32 จริง</p>
             </div>
             <div className="flex gap-2">
               <button
@@ -173,6 +193,30 @@ export default function SimulatorPage() {
               <button
                 onClick={() => toggleFastMode(false)}
                 className={`px-3 py-1 rounded-lg text-sm font-semibold transition ${!fastMode ? "bg-red-600" : "bg-gray-600 hover:bg-gray-500"}`}
+              >
+                ปิด
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* ส่วนบังคับสถานะตู้ว่างตอนยังไม่ได้ต่อเซนเซอร์ Ultrasonic จริง */}
+        <div className="bg-gray-800 rounded-lg p-4 mb-4">
+          <div className="flex justify-between items-center">
+            <div>
+              <h2 className="font-semibold mb-1">🔌 ยังไม่ได้ต่อ Ultrasonic</h2>
+              <p className="text-gray-400 text-xs">ขา ECHO ที่ลอยจะสุ่มขึ้นเต็ม/ว่างสลับไปมาเอง เปิดไว้เพื่อบังคับสถานะตู้ว่างเสมอ</p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => toggleForceEmpty(true)}
+                className={`px-3 py-1 rounded-lg text-sm font-semibold transition ${forceEmpty ? "bg-blue-600" : "bg-gray-600 hover:bg-gray-500"}`}
+              >
+                เปิด
+              </button>
+              <button
+                onClick={() => toggleForceEmpty(false)}
+                className={`px-3 py-1 rounded-lg text-sm font-semibold transition ${!forceEmpty ? "bg-red-600" : "bg-gray-600 hover:bg-gray-500"}`}
               >
                 ปิด
               </button>

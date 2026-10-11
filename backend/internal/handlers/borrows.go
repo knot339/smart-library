@@ -4,6 +4,7 @@ import (
 	"smart-library-api/internal/api"
 	"smart-library-api/internal/database"
 	"smart-library-api/internal/models"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -61,28 +62,71 @@ func GetPatronBorrow(c *fiber.Ctx) error {
 	return c.JSON(borrows)
 }
 
+// รูปแบบวันที่ที่ OPAC อาจส่งมาใน CHECKOUTDATE/DUEDATE (ไม่รู้แน่ชัดว่าฝั่ง OPAC ใช้รูปแบบไหน
+// จึงลองไล่เช็คหลายรูปแบบที่เป็นไปได้ ถ้า parse ไม่ได้เลยค่อย fallback)
+var opacDateLayouts = []string{
+	time.RFC3339,
+	"2006-01-02T15:04:05",
+	"2006-01-02 15:04:05",
+	"2006-01-02",
+	"02/01/2006 15:04:05",
+	"02/01/2006",
+}
+
+func parseOPACDate(s string) (time.Time, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}, false
+	}
+	for _, layout := range opacDateLayouts {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
+}
+
 // บันทึกการทำรายการคืนหนังสือเข้าสู่ระบบจำลอง (อ้างอิงจากรหัสหนังสือและผู้ยืม)
 // ค้นหารายการยืมล่าสุดที่ยังค้างส่ง และบันทึกหมายเลขโทรศัพท์ของผู้ดำเนินการคืน
 func ReturnByBorrowerAndBook(c *fiber.Ctx) error {
 	type ReturnRequest struct {
 		BookBarcode     string `json:"book_barcode"`
 		BorrowerCode    string `json:"borrower_code"`
+		BorrowerName    string `json:"borrower_name"`
 		ReturnedByPhone string `json:"returned_by_phone"`
+		CheckoutDate    string `json:"checkout_date"` // CHECKOUTDATE จริงจาก OPAC (ถ้ามี — ไม่มีกรณีผู้ใช้ทั่วไปที่ไม่มีรายการยืมในระบบ)
+		DueDate         string `json:"due_date"`       // DUEDATE จริงจาก OPAC (ถ้ามี)
 	}
 	req := new(ReturnRequest)
 	if err := c.BodyParser(req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "ข้อมูลไม่ถูกต้อง"})
 	}
 
+	// ใช้วันที่ยืมจริงจาก OPAC ถ้า Frontend ส่งมาและ parse ได้ ไม่งั้น fallback เป็นวันที่ทำรายการคืนนี้
+	// (เช่น กรณีผู้ใช้ทั่วไป/Guest ที่ไม่มีรายการยืมในระบบ OPAC ให้ตรวจสอบเลย)
+	borrowedAt := time.Now()
+	if t, ok := parseOPACDate(req.CheckoutDate); ok {
+		borrowedAt = t
+	}
+
+	// เช่นเดียวกับกำหนดคืน ถ้า parse ได้ให้ใช้ค่าจริง ไม่งั้น fallback เป็น 14 วันจากวันที่ยืม
+	// (ไม่ปล่อยว่างไว้เป็นค่าเริ่มต้นของ time.Time เพราะจะกลายเป็นวันที่ 1/1/0001 ในหน้า Admin)
+	dueDate := borrowedAt.AddDate(0, 0, 14)
+	if t, ok := parseOPACDate(req.DueDate); ok {
+		dueDate = t
+	}
+
 	// บันทึกการคืนลงในฐานข้อมูลจำลองเป็น record ใหม่
 	now := time.Now()
 	record := models.BorrowRecord{
 		BorrowerCode:    req.BorrowerCode,
+		BorrowerName:    req.BorrowerName,
 		BookBarcode:     req.BookBarcode,
 		ReturnedByPhone: req.ReturnedByPhone,
 		ReturnedAt:      &now,
 		Status:          "returned",
-		BorrowedAt:      time.Now(), // เราอาจจะไม่รู้วันที่ยืมจริงจาก Request นี้ เว้นแต่ Frontend จะส่งมาด้วย ให้ใช้วันปัจจุบันไปก่อนหรือปล่อยว่าง
+		BorrowedAt:      borrowedAt,
+		DueDate:         dueDate,
 	}
 
 	if err := database.DB.Create(&record).Error; err != nil {
@@ -122,6 +166,7 @@ func GetBorrowRecords(c *fiber.Ctx) error {
 		result = append(result, fiber.Map{
 			"id":                r.ID,
 			"borrower_code":     r.BorrowerCode,
+			"borrower_name":     r.BorrowerName,
 			"book_barcode":      r.BookBarcode,
 			"book_title":        book.Title,
 			"book_author":       book.Author,

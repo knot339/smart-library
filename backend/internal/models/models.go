@@ -33,6 +33,7 @@ type Borrower struct {
 type BorrowRecord struct {
 	ID              uint       `gorm:"primaryKey" json:"id"`
 	BorrowerCode    string     `gorm:"size:20;index" json:"borrower_code"`
+	BorrowerName    string     `gorm:"size:100" json:"borrower_name"` // ชื่อผู้ยืม ณ ตอนคืน (มาจาก OPAC ตอน tablet ระบุตัวตน เก็บไว้ตรงนี้เพราะ local ไม่มีชื่อผู้ยืมจริง)
 	BookBarcode     string     `gorm:"size:50;index" json:"book_barcode"`
 	Renew           int        `gorm:"default:0" json:"renew"`
 	BorrowedAt      time.Time  `json:"borrowed_at"`

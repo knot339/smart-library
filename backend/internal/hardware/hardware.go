@@ -3,14 +3,16 @@ package hardware
 import "fmt"
 
 type MockHardware struct {
-	MotorStatus string
-	MotorLogs   []string
-	IsFull      bool
-	FastMode    bool
+	MotorStatus    string
+	MotorLogs      []string
+	IsFull         bool
+	FastMode       bool
+	ForceEmpty     bool // เปิดไว้เมื่อยังไม่ได้ต่อเซนเซอร์ Ultrasonic จริง จะไม่รับสถานะ "เต็ม" จากที่ไหนเลย บังคับว่างเสมอ
+	ESP32Connected bool // สถานะ ESP32 (มอเตอร์/RFID) ว่าต่อ MQTT broker อยู่จริงไหม (รู้จาก Last Will/Testament)
 }
 
 func NewMockHardware() *MockHardware {
-	return &MockHardware{MotorStatus: "closed", MotorLogs: []string{}, IsFull: false, FastMode: false}
+	return &MockHardware{MotorStatus: "closed", MotorLogs: []string{}, IsFull: false, FastMode: false, ForceEmpty: false, ESP32Connected: false}
 }
 
 var Shared *MockHardware
@@ -63,11 +65,34 @@ func (m *MockHardware) AddBook() {
 }
 
 func (m *MockHardware) SetFull(full bool) {
+	if m.ForceEmpty {
+		// อยู่ในโหมดยังไม่ได้ต่อเซนเซอร์จริง ไม่ว่าใคร/อะไรจะพยายามตั้งเป็นเต็ม ก็บังคับว่างไว้ก่อนเสมอ
+		full = false
+	}
 	m.IsFull = full
 	if full {
 		m.addLog("🔴 ตู้เต็ม")
 	} else {
 		m.addLog("🟢 ตู้ว่าง")
+	}
+}
+
+func (m *MockHardware) SetForceEmpty(force bool) {
+	m.ForceEmpty = force
+	if force {
+		m.addLog("🔌 โหมดไม่ได้ต่อ Ultrasonic — บังคับสถานะตู้ว่างเสมอ")
+		m.SetFull(false) // เคลียร์สถานะเต็มที่อาจค้างอยู่ทันที
+	} else {
+		m.addLog("🔌 ปิดโหมดบังคับตู้ว่าง — กลับไปรับสถานะจากเซนเซอร์ตามจริง")
+	}
+}
+
+func (m *MockHardware) SetESP32Connected(connected bool) {
+	m.ESP32Connected = connected
+	if connected {
+		m.addLog("🔌 ESP32 (มอเตอร์/RFID) เชื่อมต่อแล้ว")
+	} else {
+		m.addLog("⚠️ ESP32 (มอเตอร์/RFID) หลุดการเชื่อมต่อ")
 	}
 }
 

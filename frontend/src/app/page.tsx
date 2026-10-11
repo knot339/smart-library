@@ -2,7 +2,7 @@
 import { useState, useEffect, useRef } from "react";
 
 import AnimatedBackground from "../components/AnimatedBackground";
-import { Step, Borrower, Book, BorrowRecord } from "../types";
+import { Step, Borrower, Book, BorrowRecord, PatronBorrow } from "../types";
 import { API_BASE_URL as API, WS_BASE_URL } from "../lib/config";
 
 export default function TabletPage() {
@@ -11,8 +11,9 @@ export default function TabletPage() {
   const [inputBarcode, setInputBarcode] = useState("");
   const [borrower, setBorrower] = useState<Borrower | null>(null);
   const [booksToReturn, setBooksToReturn] = useState<Book[]>([]);
-  const [activeBorrows, setActiveBorrows] = useState<any[]>([]);
+  const [activeBorrows, setActiveBorrows] = useState<PatronBorrow[]>([]);
   const [isFull, setIsFull] = useState(false);
+  const [esp32Connected, setEsp32Connected] = useState(true); // true ไว้ก่อนกันจอกระพริบตอนเพิ่งโหลดหน้า
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [time, setTime] = useState("");
@@ -23,6 +24,7 @@ export default function TabletPage() {
   const booksEndRef = useRef<HTMLDivElement>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const pendingRfidRef = useRef<string[]>([]);
+  const initialMotorCheckedRef = useRef(false);
 
   // เล่นเสียง "ปี๊ป" แจ้งเตือนเมื่อสแกน RFID สำเร็จ (ใช้ Web Audio API ไม่ต้องพึ่งไฟล์เสียง)
   const playBeep = () => {
@@ -87,8 +89,19 @@ export default function TabletPage() {
         const data = await res.json();
         setIsFull(data.is_full);
         setFastMode(data.fast_mode || false);
+        setEsp32Connected(!!data.esp32_connected);
         // อัปเดตสถานะการทำงานของมอเตอร์จากข้อมูลที่ได้รับจากเซิร์ฟเวอร์
         setMotorOpen(data.motor_status === "open" || data.motor_status === "dump");
+
+        // เช็คครั้งเดียวตอนเพิ่งโหลดหน้า (รวมถึงตอน reload อัตโนมัติจาก WebSocket หลุด) ว่ามอเตอร์
+        // ค้างอยู่ตำแหน่งอื่นที่ไม่ใช่ปิดไหม — ถ้าหน้าเว็บ reload แปลว่า state ของรายการที่ทำอยู่
+        // (ถ้ามี) หายไปแล้ว ไม่มีใครมาทำรายการต่อให้เสร็จได้ จึงปิดฝาตู้กลับให้ปลอดภัยไว้ก่อนเสมอ
+        if (!initialMotorCheckedRef.current) {
+          initialMotorCheckedRef.current = true;
+          if (data.motor_status && data.motor_status !== "closed") {
+            runMotor("close", 20000);
+          }
+        }
       } catch { }
     };
     fetch_();
@@ -103,10 +116,29 @@ export default function TabletPage() {
     let active = true;
     let ws: WebSocket | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let pingInterval: ReturnType<typeof setInterval> | null = null;
+    let failedAttempts = 0;
+    // หลุดต่อเนื่องเกิน ~10 วินาที (5 ครั้ง x 2 วินาที) ให้รีโหลดหน้าทั้งหมดไปเลย ปลอดภัยกว่าปล่อยให้
+    // หน้าเว็บค้างอยู่แบบดูเหมือนใช้งานได้แต่รับ RFID/บาร์โค้ดจากเซิร์ฟเวอร์ไม่ได้จริง
+    const MAX_FAILED_ATTEMPTS_BEFORE_RELOAD = 5;
 
     const connect = () => {
       if (!active) return;
       ws = new WebSocket(WS_BASE_URL);
+
+      ws.onopen = () => {
+        failedAttempts = 0; // เชื่อมต่อสำเร็จ รีเซ็ตตัวนับใหม่
+
+        // ส่ง ping ทุก 10 วินาที กัน NAT ของ hotspot มือถือตัด connection ที่เงียบไปเฉยๆ
+        // (ปัญหาเดียวกับที่เจอกับ MQTT ของ ESP32 — connection ค้างแบบไม่มีข้อมูลวิ่งผ่านนานเกินไป
+        // แล้วหลุดแบบที่ onclose ไม่ทันจับ ทำให้ต้องรีเฟรชหน้าเองก่อนจะกลับมาใช้ได้)
+        if (pingInterval) clearInterval(pingInterval);
+        pingInterval = setInterval(() => {
+          if (ws?.readyState === WebSocket.OPEN) {
+            ws.send("ping");
+          }
+        }, 10000);
+      };
 
       ws.onmessage = (event) => {
         const msg = JSON.parse(event.data);
@@ -125,10 +157,11 @@ export default function TabletPage() {
 
         if (msg.type === "rfid") {
           // จัดการเมื่อได้รับข้อมูลประเภท RFID เพื่อตรวจสอบข้อมูลของหนังสือ
-          playBeep(); // แจ้งเตือนผู้ใช้งานด้วยเสียงว่าสแกนติดแล้ว
-          setInputBarcode(msg.value);
+          // ไม่อัปเดตช่องแสดงผลตรงนี้ทันที — ให้ processScannedBarcodes เป็นคนอัปเดตเอง
+          // เฉพาะตอนเจอหนังสือเล่มใหม่จริงๆ เท่านั้น กันค่าเล่มเก่า/ที่คืนไปแล้วโผล่ค้างอยู่ในช่อง
           setStep((prev) => {
             if (prev === "check-book") {
+              // เสียงดังเฉพาะตอนเจอหนังสือเล่มใหม่จริงๆ (เช็คในฟังก์ชันประมวลผล) ไม่ใช่ทุกครั้งที่สแกน
               setTimeout(() => handleCheckBookWithBarcode(msg.value), 100);
             } else {
               // สแกนเข้ามาก่อนที่ตู้จะเปิดเสร็จ (ยังอยู่ขั้นตอน identify ระหว่างรอมอเตอร์)
@@ -143,7 +176,14 @@ export default function TabletPage() {
       ws.onerror = () => console.log("WebSocket error");
 
       ws.onclose = () => {
+        if (pingInterval) clearInterval(pingInterval);
         if (!active) return;
+        failedAttempts++;
+        if (failedAttempts >= MAX_FAILED_ATTEMPTS_BEFORE_RELOAD) {
+          console.log("WebSocket หลุดต่อเนื่องนานเกินไป กำลังรีโหลดหน้า...");
+          window.location.reload();
+          return;
+        }
         reconnectTimer = setTimeout(connect, 2000);
       };
     };
@@ -153,6 +193,7 @@ export default function TabletPage() {
     return () => {
       active = false;
       if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (pingInterval) clearInterval(pingInterval);
       ws?.close();
     };
   }, []);
@@ -260,33 +301,43 @@ export default function TabletPage() {
     setLoading(false);
   };
 
-  // ประมวลผล Barcode ที่สแกนมา (รองรับหลายรหัสคั่นด้วยช่องว่าง/comma) แล้ว "เพิ่ม" เข้าไปในรายการที่สแกนไว้ก่อนหน้า
-  // (ไม่ใช่แทนที่ทั้งหมด เพราะผู้ใช้คืนหนังสือทีละเล่มต่อเนื่องกัน ถ้าแทนที่ เล่มก่อนหน้าจะหายไปทุกครั้งที่สแกนเล่มใหม่)
+  // คืนหนังสือทีละเล่ม: ใช้แค่ค่าที่เจอล่าสุดจากที่สแกนมา (ตัวท้ายสุดของข้อความ) เท่านั้น
+  // เพราะเครื่องอ่าน RFID อาจจับสัญญาณหนังสือเล่มที่เพิ่งคืนไปแล้ว (ยังอยู่ในรัศมีก่อนถูกเทออก)
+  // ติดมาพร้อมเล่มใหม่ในข้อความเดียวกันได้ ถ้าใช้ทั้งหมดจะทำให้เล่มเก่าโผล่ขึ้นมาซ้ำ
   const processScannedBarcodes = async (raw: string) => {
     const barcodes = raw.split(/[\s,]+/).filter(b => b.trim() !== "");
     if (barcodes.length === 0) return;
 
+    const latest = barcodes[barcodes.length - 1].trim();
+
     setLoading(true);
     setErrorMsg("");
 
-    const errors: string[] = [];
-
-    for (const b of barcodes) {
-      try {
-        const res = await fetch(`${API}/book/barcode/${b.trim()}`);
-        const data = await res.json();
-        if (!res.ok) {
-          errors.push(`${b}: ${data.error || "ไม่พบหนังสือ"}`);
-          continue;
+    try {
+      // เช็คกับรายการ "หนังสือในตู้" จริงจากฐานข้อมูล (ตัวเดียวกับที่หน้า Dashboard ใช้แสดง)
+      // ว่าเล่มนี้ถูกคืนเข้าตู้ไปแล้วหรือยัง กันเครื่องอ่านจับสัญญาณเล่มเดิมซ้ำขึ้นมาอีก — เช็คจาก
+      // ฐานข้อมูลจริงแทนการจำไว้ในหน่วยความจำเบราว์เซอร์ จะกันซ้ำได้แม้หน้าเว็บ reload ไปแล้วก็ตาม
+      const cabinetRes = await fetch(`${API}/dashboard/books-in-cabinet`);
+      if (cabinetRes.ok) {
+        const cabinetData = await cabinetRes.json();
+        const alreadyInCabinet = (cabinetData.books || []).some((b: { barcode: string }) => b.barcode === latest);
+        if (alreadyInCabinet) {
+          setLoading(false);
+          return;
         }
-        setBooksToReturn(prev => prev.some(x => x.id === data.id) ? prev : [...prev, data]);
-      } catch {
-        errors.push(`${b}: เกิดข้อผิดพลาด`);
       }
-    }
 
-    if (errors.length > 0) {
-      setErrorMsg(errors.join(" | "));
+      const res = await fetch(`${API}/book/barcode/${latest}`);
+      const data = await res.json();
+      if (!res.ok) {
+        setErrorMsg(`${latest}: ${data.error || "ไม่พบหนังสือ"}`);
+      } else {
+        setBooksToReturn([data]); // แทนที่ด้วยเล่มล่าสุดเล่มเดียว ไม่สะสมหลายเล่ม
+        setInputBarcode(latest); // โชว์แค่ค่าของเล่มที่จะคืนจริงๆ เท่านั้น (เล่มเก่า/ซ้ำไม่อัปเดตช่องนี้)
+        playBeep(); // ดังเฉพาะตอนเจอหนังสือเล่มใหม่จริงๆ เท่านั้น (เล่มเก่าที่คืนไปแล้วไม่ดัง)
+      }
+    } catch {
+      setErrorMsg(`${latest}: เกิดข้อผิดพลาด`);
     }
 
     setLoading(false);
@@ -305,13 +356,19 @@ export default function TabletPage() {
     try {
       // วนลูปบันทึกข้อมูลการคืนหนังสือทุกลงในระบบฐานข้อมูล
       for (const b of booksToReturn) {
+        // หาวันที่ยืม/กำหนดคืนจริงของเล่มนี้จากรายการค้างส่งที่ดึงจาก OPAC ตอนระบุตัวตน
+        // (ผู้ใช้ทั่วไป/Guest จะไม่มีรายการนี้เลย เพราะไม่มีการยืมผ่านระบบ OPAC)
+        const activeBorrow = activeBorrows.find(ab => ab.BARCODE === b.barcode);
         const res = await fetch(`${API}/borrows/return`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             book_barcode: b.barcode,
             borrower_code: borrower?.code,
-            returned_by_phone: borrower?.phone || ""
+            borrower_name: borrower?.name || "",
+            returned_by_phone: borrower?.phone || "",
+            checkout_date: activeBorrow?.CHECKOUTDATE || "",
+            due_date: activeBorrow?.DUEDATE || ""
           }),
         });
         if (!res.ok) {
@@ -415,6 +472,82 @@ export default function TabletPage() {
   const currentStepIndex = steps.findIndex((s) => s.key === step);
 
 
+
+  // ตรวจสอบและแสดงผลหน้าจอแจ้งเตือน ในกรณีที่ตู้ไม่ได้ต่อกับ ESP32 (มอเตอร์/RFID) อยู่
+  // (เช็คจาก MQTT Last Will/Testament ของ ESP32 ผ่าน backend ไม่ใช่แค่หน้าเว็บต่อ backend ได้เฉยๆ)
+  // ข้ามเงื่อนไขนี้ถ้าเปิด Fast Mode ไว้ (ตั้งจากหน้า Simulator) เพื่อให้ทดสอบ flow การคืนหนังสือได้
+  // ทั้งหมดโดยไม่ต้องมี ESP32 ต่ออยู่จริง
+  if (!esp32Connected && !fastMode) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-blue-950 to-blue-900 flex flex-col select-none relative">
+        <AnimatedBackground />
+        <div className="relative z-10 flex flex-col flex-1">
+
+          {/* Header */}
+          <div className="bg-blue-950 px-10 py-6 flex justify-between items-center border-b border-blue-800 shadow-lg">
+            <div className="flex items-center gap-5">
+              <div className="bg-white rounded-full w-16 h-16 flex items-center justify-center p-2">
+                <img src="/images/LOGO-RUTS-07-2-copy.png" alt="RUTS Logo" className="w-full h-full object-contain" />
+              </div>
+              <div>
+                <p className="text-blue-300 text-base tracking-widest uppercase mb-1">Book Return Station</p>
+                <h1 className="text-white text-2xl font-bold">ระบบรับคืนหนังสืออัตโนมัติ</h1>
+              </div>
+            </div>
+            <div className="text-right">
+              <p className="text-blue-400 text-base mb-1">เวลาปัจจุบัน</p>
+              <p className="text-white text-4xl font-mono font-bold">{time}</p>
+              <div className="flex items-center gap-2 mt-2 justify-end">
+                <div className="w-3 h-3 rounded-full bg-red-400" />
+                <p className="text-base text-red-300">อุปกรณ์ไม่พร้อมใช้งาน</p>
+              </div>
+            </div>
+          </div>
+
+          {/* ส่วนแสดงหน้าจอแจ้งเตือนเมื่อ ESP32 ไม่ได้ต่ออยู่ */}
+          <div className="flex-1 flex items-center justify-center p-4 min-h-0">
+            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md p-6 text-center flex flex-col justify-center min-h-[400px]">
+
+              <div className="w-24 h-24 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                <span className="text-5xl">🔌</span>
+              </div>
+
+              <h2 className="text-3xl font-bold text-red-600 mb-3">
+                ขณะนี้ตู้ไม่พร้อมใช้งาน
+              </h2>
+
+              <p className="text-gray-600 mb-2 text-xl font-semibold">
+                เชื่อมต่อกับอุปกรณ์มอเตอร์/เครื่องอ่านไม่ได้
+              </p>
+              <p className="text-gray-500 text-lg mb-5">
+                ไม่สามารถเปิดตู้หรือสแกนหนังสือได้ในขณะนี้
+              </p>
+
+              <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 mb-5 text-left">
+                <p className="text-blue-700 font-bold text-lg mb-2">📋 กรุณาดำเนินการดังนี้</p>
+                <ul className="text-blue-600 text-base space-y-2 pl-2">
+                  <li>• ติดต่อบรรณารักษ์ที่เคาน์เตอร์</li>
+                  <li>• คืนหนังสือที่เคาน์เตอร์บริการโดยตรง</li>
+                  <li>• รอจนกว่าเจ้าหน้าที่จะแก้ไขอุปกรณ์</li>
+                </ul>
+              </div>
+
+              <p className="text-gray-400 text-sm">
+                🔄 ระบบจะอัปเดตสถานะอัตโนมัติทุก 3 วินาที
+                <br />หน้านี้จะกลับสู่ปกติเมื่อเชื่อมต่ออุปกรณ์ได้แล้ว
+              </p>
+            </div>
+          </div>
+
+          {/* Footer */}
+          <div className="relative z-10 text-center py-6 text-white text-xl bg-blue-950 border-t border-blue-800">
+            หากพบปัญหา กรุณาติดต่อบรรณารักษ์ที่เคาน์เตอร์
+          </div>
+
+        </div>
+      </div>
+    );
+  }
 
   // ตรวจสอบและแสดงผลหน้าจอแจ้งเตือน ในกรณีที่ความจุของตู้รับคืนหนังสือเต็ม
   if (isFull) {
@@ -562,6 +695,25 @@ export default function TabletPage() {
               </div>
             )}
 
+            {/* คำแนะนำวิธีวางหนังสือ — แสดงทับหน้าตรวจสอบหนังสือไว้จนกว่าจะเจอหนังสือเล่มใหม่จริงๆ
+                (booksToReturn ว่างอยู่ตราบใดที่ยังไม่เจอเล่มใหม่ รวมถึงตอนสแกนเจอเล่มที่คืนไปแล้วด้วย
+                ซึ่งไม่ทำให้ booksToReturn เปลี่ยนแปลงอยู่แล้ว หน้าต่างนี้จึงไม่หายไปเองโดยไม่ต้องเพิ่ม logic อะไรเพิ่ม) */}
+            {step === "check-book" && booksToReturn.length === 0 && (
+              <div className="fixed inset-0 z-50 bg-white flex flex-col items-center justify-center p-6 text-center">
+                <h2 className="text-5xl font-bold text-blue-900 mb-2">กรุณาคืนหนังสือทีละ 1 เล่ม</h2>
+                <p className="text-gray-600 text-3xl mb-4">วางหนังสือโดยนำสันหนังสือเข้าตามรูป</p>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src="/images/returnExample.jpg"
+                  alt="ตัวอย่างการวางหนังสือ"
+                  className="max-w-full max-h-[70vh] w-auto h-auto rounded-2xl shadow-lg object-contain"
+                />
+                <button onClick={handleReset} className="mt-6 text-gray-400 hover:text-gray-600 text-xl py-2 px-6">
+                  ← ยกเลิกและกลับหน้าแรก
+                </button>
+              </div>
+            )}
+
             {/* ขั้นตอนที่ 1: หน้าจอเริ่มต้นระบบการรับคืนหนังสือ */}
             {step === "select-user" && (
               <div className="text-center flex-1 flex flex-col justify-center">
@@ -586,7 +738,7 @@ export default function TabletPage() {
                 <input
                   id="input-identify"
                   type="text"
-                  placeholder="รหัศนักศึกษา หรือ เบอร์โทร"
+                  placeholder="รหัสนักศึกษา หรือ เบอร์โทร"
                   value={inputCode}
                   onChange={(e) => setInputCode(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleIdentify()}

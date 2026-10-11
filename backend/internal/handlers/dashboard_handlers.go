@@ -115,6 +115,7 @@ func GetBooksInCabinet(c *fiber.Ctx) error {
 				"isbn":              isbn,
 				"returned_at":       r.ReturnedAt,
 				"returned_by":       r.BorrowerCode,
+				"returned_by_name":  r.BorrowerName,
 				"returned_by_phone": r.ReturnedByPhone,
 			}
 		}

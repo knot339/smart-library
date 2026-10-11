@@ -65,6 +65,14 @@ func InitMQTT() {
 			log.Printf("📡 Cabinet full status from ESP32: %v", isFull)
 			hardware.Shared.SetFull(isFull)
 		})
+
+		// Subscribe to ESP32's online/offline presence (publish ตอนต่อสำเร็จ + Last Will ตอนหลุด/ดับ)
+		// ใช้บอกฝั่งหน้าเว็บว่าฮาร์ดแวร์จริงต่ออยู่ไหม ไม่ใช่แค่ backend คุย broker ได้
+		c.Subscribe("smartlibrary/esp32/status", 0, func(client mqtt.Client, msg mqtt.Message) {
+			connected := string(msg.Payload()) == "online"
+			log.Printf("📡 ESP32 status: %s", msg.Payload())
+			hardware.Shared.SetESP32Connected(connected)
+		})
 	}
 	opts.OnConnectionLost = func(c mqtt.Client, err error) {
 		log.Printf("❌ MQTT Connection Lost: %v", err)
@@ -107,6 +115,20 @@ func SimulatorSend(c *fiber.Ctx) error {
 	}
 
 	payload, _ := json.Marshal(msg)
+
+	// อัปเดตสถานะมอเตอร์ใน hardware.Shared ด้วย (เดิมปุ่มนี้ส่ง MQTT ไปหา ESP32 ตรงๆ อย่างเดียว
+	// ไม่เคยอัปเดต state ฝั่ง backend เลย ทำให้ /api/status และหน้า dashboard/tablet
+	// ที่อ่านสถานะมอเตอร์จาก backend ไม่เห็นการเปลี่ยนแปลงจากปุ่มในหน้า Simulator)
+	if msg.Type == "motor" {
+		switch msg.Value {
+		case "open":
+			hardware.Shared.SetOpen()
+		case "close":
+			hardware.Shared.SetClosed()
+		case "dump":
+			hardware.Shared.SetDump()
+		}
+	}
 
 	// ส่งสัญญาณไปยังอุปกรณ์แท็บเล็ต (ข้อมูลจาก Barcode หรือ RFID)
 	if msg.Type == "barcode" || msg.Type == "rfid" {
