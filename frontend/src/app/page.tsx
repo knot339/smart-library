@@ -240,6 +240,52 @@ export default function TabletPage() {
   }, [step]);
 
 
+  // ดึงรายการหนังสือที่ผู้ใช้งานยังคงยืมอยู่ตาม OPAC แล้วกรองเล่มที่คืนเข้าตู้ไปแล้วออก
+  // (OPAC อาจอัปเดตสถานะ "คืนแล้ว" ช้ากว่าความเป็นจริง เช่น เพิ่งคืนเข้าตู้ไปหมาดๆ แต่ OPAC
+  // ยังไม่ sync ให้ หากไม่กรอง จะทำให้หนังสือที่คืนไปแล้วโผล่ค้างอยู่ในรายการ "ค้างส่ง" ซ้ำอีก)
+  const fetchActiveBorrowsExcludingCabinet = async (barcode: string): Promise<PatronBorrow[]> => {
+    const borrowRes = await fetch(`${API}/patron/${barcode}/borrows`);
+    if (!borrowRes.ok) return [];
+    const borrowData: PatronBorrow[] = await borrowRes.json();
+
+    try {
+      const cabinetRes = await fetch(`${API}/dashboard/books-in-cabinet`);
+      if (cabinetRes.ok) {
+        const cabinetData = await cabinetRes.json();
+        const cabinetBarcodes = new Set((cabinetData.books || []).map((b: { barcode: string }) => b.barcode));
+        return borrowData.filter(b => !cabinetBarcodes.has(b.BARCODE));
+      }
+    } catch { }
+    return borrowData;
+  };
+
+  // กดปุ่ม "เริ่มต้น" — เช็คสถานะ ESP32 สดๆ อีกครั้งก่อนเข้าสู่ขั้นตอนระบุตัวตน (ไม่พึ่ง esp32Connected
+  // ที่ polling ไว้ทุก 3 วินาทีเฉยๆ เพราะอาจมีช่วงหน่วงที่ state ยังไม่ทันอัปเดตตามจริง) ถ้าต่อไม่ได้
+  // ให้ reload หน้าทั้งหมดทันที จะได้ reset ทุกอย่าง (WebSocket, state ค้าง) ให้ลองเชื่อมต่อใหม่สะอาดๆ
+  // แทนที่จะปล่อยให้ผู้ใช้กดต่อไปแล้วมาเจอปัญหาตอนสแกนหนังสือทีหลัง
+  const handleStart = async () => {
+    if (fastMode) {
+      setStep("identify");
+      setInputCode("");
+      setErrorMsg("");
+      return;
+    }
+    try {
+      const res = await fetch(`${API}/status`);
+      const data = await res.json();
+      if (!data.esp32_connected) {
+        window.location.reload();
+        return;
+      }
+    } catch {
+      window.location.reload();
+      return;
+    }
+    setStep("identify");
+    setInputCode("");
+    setErrorMsg("");
+  };
+
   // ขั้นตอนที่ 1: ตรวจสอบข้อมูลเพื่อยืนยันตัวตนของผู้ใช้งานจากฐานข้อมูล
   const handleIdentify = async () => {
     const code = inputCode.trim();
@@ -284,14 +330,8 @@ export default function TabletPage() {
         type: "member"
       });
 
-      // ดึงข้อมูลรายการหนังสือที่ผู้ใช้งานรายดังกล่าวยังคงทำการยืมอยู่
-      const borrowRes = await fetch(`${API}/patron/${data.BARCODE}/borrows`);
-      if (borrowRes.ok) {
-        const borrowData = await borrowRes.json();
-        setActiveBorrows(borrowData);
-      } else {
-        setActiveBorrows([]);
-      }
+      // ดึงข้อมูลรายการหนังสือที่ผู้ใช้งานรายดังกล่าวยังคงทำการยืมอยู่ (ไม่รวมเล่มที่คืนเข้าตู้ไปแล้ว)
+      setActiveBorrows(await fetchActiveBorrowsExcludingCabinet(data.BARCODE));
 
       await runMotor("open", 10000);
       setStep("check-book");
@@ -445,12 +485,7 @@ export default function TabletPage() {
         type: "member"
       });
 
-      const borrowRes = await fetch(`${API}/patron/${data.BARCODE}/borrows`);
-      if (borrowRes.ok) {
-        setActiveBorrows(await borrowRes.json());
-      } else {
-        setActiveBorrows([]);
-      }
+      setActiveBorrows(await fetchActiveBorrowsExcludingCabinet(data.BARCODE));
 
       await runMotor("open", 10000);
       setStep("check-book");
@@ -721,7 +756,7 @@ export default function TabletPage() {
                 <h2 className="text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-blue-900 mb-3">ยินดีต้อนรับ</h2>
                 <p className="text-gray-600 mb-2 text-xl font-semibold">ระบบรับคืนหนังสืออัตโนมัติ</p>
                 <p className="text-gray-400 mb-8 text-base">Smart Library Return Station</p>
-                <button onClick={() => { setStep("identify"); setInputCode(""); setErrorMsg(""); }}
+                <button onClick={handleStart}
                   className="w-full bg-gradient-to-r from-blue-600 to-blue-800 hover:from-blue-700 hover:to-blue-900 active:scale-95 text-white font-bold py-5 rounded-2xl text-2xl transition-all shadow-xl transform hover:shadow-2xl">
                   เริ่มต้น
                 </button>

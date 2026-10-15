@@ -121,9 +121,16 @@ func GetBooksInCabinet(c *fiber.Ctx) error {
 		}
 	}
 
+	// สร้าง books ตามลำดับของ records ที่ query มา (เรียง returned_at DESC อยู่แล้ว) ไม่ใช่ไล่จาก
+	// bookMap ตรงๆ เพราะ Go map ไม่รับประกันลำดับการวน iterate เลยทำให้ลำดับสลับมั่วทุกครั้งที่ refresh
 	books := make([]fiber.Map, 0, len(bookMap))
-	for _, b := range bookMap {
-		books = append(books, b)
+	addedBarcode := make(map[string]bool, len(bookMap))
+	for _, r := range records {
+		if addedBarcode[r.BookBarcode] {
+			continue
+		}
+		addedBarcode[r.BookBarcode] = true
+		books = append(books, bookMap[r.BookBarcode])
 	}
 	return c.JSON(fiber.Map{"count": len(books), "books": books})
 }

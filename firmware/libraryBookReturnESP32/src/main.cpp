@@ -22,9 +22,29 @@ IPAddress DNS2_IP(8, 8, 8, 8);
 #define MAX_BOOKS 10
 const unsigned long COLLECTION_WINDOW = 2000;
 
+// โครงสร้าง frame ของ reader SID_U861 (โหมด Active + Output: RS232/RS485 Output) ที่ยืนยันแล้วจาก
+// การจับ raw byte ด้วย demo software ของ reader เอง:
+//   13 00 EE 00 [data ยาวตาม Read Word Number*2 byte: 00 + รหัสหนังสือ(ASCII) + 0x0D + null padding] [checksum 2 byte]
+// ต้องอ่านตามตำแหน่ง/ความยาวที่รู้แน่นอนแบบนี้ ไม่ใช่กรองเอาแต่ตัวอักษรพิมพ์ได้มารวมกันเฉยๆ เพราะ
+// checksum ท้าย frame เป็นค่าที่ขึ้นกับข้อมูล มีโอกาสสุ่มออกมาเป็นตัวอักษร/ตัวเลขปกติได้ ถ้ากรองแบบเดิม
+// จะหลุดไปปนเป็นตัวหน้าของรหัสเล่มถัดไปโดยไม่รู้ตัว
+//
+// RFID_READ_WORD_NUMBER ต้องตรงกับค่า "Read Word Number" ที่ตั้งไว้ในหน้า Reader Parameter ของ reader
+// เสมอ (ตอนนี้ตั้งไว้ 7 words = 14 byte เพราะรหัสหนังสือยาวสุดในฐานข้อมูลจริงคือ 13 ตัวอักษร) ถ้าไปแก้
+// ค่านี้ที่ตัว reader อีก ต้องมาแก้เลขตรงนี้ให้ตรงกันด้วย ไม่งั้น frame จะยาวไม่ตรงกับที่โค้ดคาดไว้
+const byte RFID_FRAME_HEAD       = 0x13;
+const byte RFID_FRAME_CMD_REPORT = 0xEE; // คำสั่งรายงานข้อมูลแท็ก (byte ที่ 3 ของ header)
+const int  RFID_HEADER_LEN       = 3;    // Head(1) + Address(1) + Command(1)
+const int  RFID_READ_WORD_NUMBER = 7;
+const int  RFID_DATA_LEN         = RFID_READ_WORD_NUMBER * 2;
+const int  RFID_CHECKSUM_LEN     = 2;
+const int  RFID_FRAME_LEN        = RFID_HEADER_LEN + RFID_DATA_LEN + RFID_CHECKSUM_LEN;
+
+byte frameBuf[RFID_FRAME_LEN];
+int  frameIdx = 0;
+
 String collectedBooks[MAX_BOOKS];
 int bookCount = 0;
-String rawBuffer = "";
 unsigned long firstScanTime = 0;
 bool isCollecting = false;
 unsigned long lastReceiveTime = 0;
@@ -390,42 +410,53 @@ void loop() {
     checkCabinetFull();
   }
 
-  // --- 1. อ่านข้อมูลดิบจาก RFID reader เข้าถังพัก ---
+  // --- 1. อ่านข้อมูลดิบจาก RFID reader ทีละไบต์ ประกอบเป็น frame ตามโครงสร้างที่รู้แน่นอนแล้ว
+  //     (sync ด้วย Head=0x13, ความยาว frame คงที่ตาม RFID_FRAME_LEN) แทนการกรองเอาตัวพิมพ์ได้มา
+  //     รวมกันเฉยๆ เพราะ checksum ท้าย frame มีโอกาสสุ่มออกมาเป็นตัวพิมพ์ได้ ถ้ากรองแบบนั้นจะเสี่ยง
+  //     หลุดไปปนเป็นตัวหน้าของรหัสเล่มถัดไป
   while (Serial2.available()) {
     byte b = Serial2.read();
-    if (isprint(b) && b != ' ' && b != '.') {
-      rawBuffer += (char)b;
-    }
     lastReceiveTime = currentTime;
+
+    if (frameIdx == 0 && b != RFID_FRAME_HEAD) {
+      continue; // ยังไม่เจอจุดเริ่ม frame ข้ามไปเรื่อยๆ จนกว่าจะเจอ Head
+    }
+    frameBuf[frameIdx++] = b;
+
+    if (frameIdx >= RFID_FRAME_LEN) {
+      // ได้ frame ครบแล้ว เช็ค Command ให้แน่ใจว่าเป็น frame รายงานแท็กจริงก่อนค่อยดึงข้อมูล
+      if (frameBuf[2] == RFID_FRAME_CMD_REPORT) {
+        String code = "";
+        for (int i = RFID_HEADER_LEN; i < RFID_HEADER_LEN + RFID_DATA_LEN; i++) {
+          byte db = frameBuf[i];
+          if (db == 0x0D) break;        // เจอตัวจบรหัสในข้อมูล หยุดอ่านต่อ
+          if (isprint(db)) code += (char)db; // ข้าม null/byte นำหน้าที่ไม่ใช่ตัวพิมพ์ได้
+        }
+
+        if (code.length() > 0) {
+          if (!isCollecting) {
+            isCollecting = true;
+            firstScanTime = currentTime;
+            bookCount = 0;
+            for (int i = 0; i < MAX_BOOKS; i++) collectedBooks[i] = "";
+          }
+
+          bool isDuplicate = false;
+          for (int i = 0; i < bookCount; i++) {
+            if (collectedBooks[i] == code) { isDuplicate = true; break; }
+          }
+          if (!isDuplicate && bookCount < MAX_BOOKS) {
+            collectedBooks[bookCount++] = code;
+          }
+        }
+      }
+      frameIdx = 0; // พร้อมรับ frame ถัดไป
+    }
   }
 
-  // --- 2. แยกรหัสหนังสือ 8 หลักเมื่อ reader หยุดส่ง ---
-  if (rawBuffer.length() > 0 && (currentTime - lastReceiveTime > timeoutGap)) {
-    int currentIndex = 0;
-    int bufferLen = rawBuffer.length();
-
-    while (currentIndex <= (bufferLen - 8)) {
-      String cleanBarcode = rawBuffer.substring(currentIndex, currentIndex + 8);
-
-      if (!isCollecting) {
-        isCollecting = true;
-        firstScanTime = currentTime;
-        bookCount = 0;
-        for (int i = 0; i < MAX_BOOKS; i++) collectedBooks[i] = "";
-      }
-
-      bool isDuplicate = false;
-      for (int i = 0; i < bookCount; i++) {
-        if (collectedBooks[i] == cleanBarcode) { isDuplicate = true; break; }
-      }
-
-      if (!isDuplicate && bookCount < MAX_BOOKS) {
-        collectedBooks[bookCount++] = cleanBarcode;
-      }
-
-      currentIndex += 8;
-    }
-    rawBuffer = "";
+  // --- 2. ถ้าเริ่มรับ frame แล้วค้างกลางคันนานเกินไป (byte หลุดหาย/สัญญาณรบกวน) ให้รีเซ็ตทิ้ง กัน sync เพี้ยน
+  if (frameIdx > 0 && (currentTime - lastReceiveTime > timeoutGap)) {
+    frameIdx = 0;
   }
 
   // --- 3. เมื่อครบหน้าต่าง 2 วินาที ส่งรายการหนังสือไป MQTT ---
