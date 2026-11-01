@@ -32,6 +32,15 @@ func Setup(app *fiber.App) {
 	app.Get("/api/dashboard/books-in-cabinet", handlers.GetBooksInCabinet)
 	app.Get("/api/dashboard/recent-returns", handlers.GetRecentReturns)
 	app.Post("/api/dashboard/cabinet/reset", handlers.ResetCabinet)
+	app.Get("/api/dashboard/system-settings", handlers.GetSystemSettings)
+	app.Post("/api/dashboard/system-settings", handlers.SetSystemSettings)
+	app.Get("/api/dashboard/notify-email", handlers.GetNotifyEmail)
+	app.Post("/api/dashboard/notify-email", handlers.SetNotifyEmail)
+	app.Get("/api/dashboard/notify-line", handlers.GetNotifyLine)
+	app.Post("/api/dashboard/notify-line", handlers.CreateNotifyLineChannel)
+	app.Put("/api/dashboard/notify-line/:id", handlers.UpdateNotifyLineChannel)
+	app.Delete("/api/dashboard/notify-line/:id", handlers.DeleteNotifyLineChannel)
+	app.Post("/api/line/webhook", handlers.LineWebhook)
 
 	// เส้นทาง API สำหรับการสืบค้นข้อมูล
 	app.Get("/api/borrower/code/:code", handlers.FindBorrowerByCode)
@@ -39,6 +48,7 @@ func Setup(app *fiber.App) {
 	app.Get("/api/patron/:barcode/borrows", handlers.GetPatronBorrow)
 	app.Get("/api/bibinfo/:bibid", handlers.GetBibInfo)
 	app.Post("/api/borrows/return", handlers.ReturnByBorrowerAndBook)
+	app.Post("/api/borrows/return-failed", handlers.ReturnFailed)
 
 	// เส้นทาง API สำหรับจัดการข้อมูลหนังสือ (CRUD)
 	app.Get("/api/books", handlers.GetBooks)

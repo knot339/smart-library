@@ -29,6 +29,22 @@ type Borrower struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// โครงสร้างข้อมูลสำหรับเก็บค่าตั้งค่าทั่วไปของระบบแบบ key-value (เช่น อีเมลแจ้งเตือนตู้เต็ม)
+type Setting struct {
+	ID    uint   `gorm:"primaryKey" json:"id"`
+	Key   string `gorm:"uniqueIndex;size:50" json:"key"`
+	Value string `gorm:"size:255" json:"value"`
+}
+
+// โครงสร้างข้อมูลสำหรับ LINE Official Account แต่ละตัวที่ใช้ส่งแจ้งเตือนตอนตู้เต็ม — แยกเป็นคนละแถว
+// เพราะแต่ละ OA มี Channel Access Token ของตัวเอง (คนละบัญชี) และส่งไปคนละกลุ่ม/คนละปลายทางกันได้
+// Targets เก็บเป็น comma-separated string ของ User/Group ID (เหมือนรูปแบบเดิมก่อนรองรับหลาย OA)
+type LineChannel struct {
+	ID      uint   `gorm:"primaryKey" json:"id"`
+	Token   string `gorm:"size:255" json:"-"` // ไม่ส่งกลับไปที่ frontend ตรงๆ เพราะเทียบเท่ารหัสผ่าน
+	Targets string `gorm:"size:1000" json:"targets"`
+}
+
 // โครงสร้างข้อมูลสำหรับตารางบันทึกการยืม-คืน (BorrowRecord)
 type BorrowRecord struct {
 	ID              uint       `gorm:"primaryKey" json:"id"`

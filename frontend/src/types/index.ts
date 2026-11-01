@@ -1,4 +1,4 @@
-export type Step = "select-user" | "identify" | "check-book" | "drop" | "success";
+export type Step = "select-user" | "identify" | "check-book" | "drop" | "success" | "not-found";
 
 export type Borrower = { 
   id: number; 

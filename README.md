@@ -102,7 +102,7 @@ sequenceDiagram
 | Path | หน้าจอ | ผู้ใช้งาน | หน้าที่ |
 |---|---|---|---|
 | `/` | Tablet (คืนหนังสือ) | นักศึกษา/บุคคลทั่วไป | ระบุตัวตน → สแกนหนังสือ → ยืนยันคืน |
-| `/dashboard` | แผงควบคุมพนักงาน | เจ้าหน้าที่ห้องสมุด | ดูสถานะตู้, ควบคุมมอเตอร์, กล้องสด/ย้อนหลัง, รายการหนังสือในตู้ |
+| `/dashboard` | แผงควบคุมพนักงาน | เจ้าหน้าที่ห้องสมุด | ดูสถานะตู้, ควบคุมมอเตอร์, กล้องสด/ย้อนหลัง, รายการหนังสือในตู้, ตั้งอีเมลแจ้งเตือนตู้เต็ม |
 | `/admin` | จัดการข้อมูล | ผู้ดูแลระบบ | CRUD หนังสือ/ผู้ยืม/รายการยืม-คืน (แบ่งหน้า + ค้นหา) |
 | `/simulator` | เครื่องมือทดสอบ | นักพัฒนา | จำลอง/ควบคุม RFID, มอเตอร์, LED, Fast Mode (เปิดแล้วทดสอบหน้าคืนหนังสือทั้งหมดได้โดยไม่ต้องต่อ ESP32 จริง), โหมดไม่ได้ต่อ Ultrasonic |
 
@@ -120,10 +120,14 @@ sequenceDiagram
 | `GET` `POST` | `/api/dashboard/cabinet`, `/motor/open`, `/close`, `/dump` | อ่าน/สั่งสถานะตู้และมอเตอร์ |
 | `GET` | `/api/dashboard/books-in-cabinet` | รายการหนังสือที่คืนแล้วอยู่ในตู้ (join กับตาราง books, รวมเลข/ชื่อผู้คืน) |
 | `POST` | `/api/dashboard/cabinet/reset` | ล้างรายการในตู้ (เปลี่ยนสถานะเป็น archived) |
+| `GET` `POST` | `/api/dashboard/notify-email` | อ่าน/ตั้งอีเมลแจ้งเตือนตอนตู้เต็ม (ค่าเริ่มต้น `library@rmutsv.ac.th`) |
+| `GET` `POST` | `/api/dashboard/notify-line` | อ่าน/ตั้งค่าแจ้งเตือนทาง LINE ตอนตู้เต็ม (ผ่าน LINE Messaging API — body: `channel_access_token`, `target_id`) |
+| `POST` | `/api/line/webhook` | รับ webhook จาก LINE (ใช้ชั่วคราวตอนตั้งค่าครั้งแรกเพื่อหา User/Group ID จาก log) |
 | `GET` | `/api/borrower/code/:code` | ค้นหาผู้ยืมจาก OPAC API |
 | `GET` | `/api/book/barcode/:barcode` | ค้นหาหนังสือจากฐานข้อมูลภายใน |
 | `GET` | `/api/patron/:barcode/borrows` | รายการค้างส่งของผู้ยืม จาก OPAC API |
 | `POST` | `/api/borrows/return` | บันทึกการคืนหนังสือ (body: `book_barcode`, `borrower_code`, `borrower_name`, `returned_by_phone`) |
+| `POST` | `/api/borrows/return-failed` | บันทึกหลักฐานว่ามาคืนแล้วจริงแต่สแกนหนังสือหาในระบบไม่พบ (status `failed`, body: `borrower_code`, `borrower_name`, `returned_by_phone`, `scanned_barcode`) |
 | `GET` `POST` `PUT` `DELETE` | `/api/books`, `/api/borrowers`, `/api/borrows` | CRUD ข้อมูลหนังสือ/ผู้ยืม/รายการยืม-คืน (ใช้โดยหน้า Admin) |
 
 ## โครงสร้างฐานข้อมูล
@@ -207,6 +211,7 @@ erDiagram
 | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | ล็อกอิน PostgreSQL |
 | `DB_HOST`, `DB_PORT` | Host/Port ของ Postgres ที่ backend เชื่อมต่อ |
 | `OPAC_API_URL`, `OPAC_API_TOKEN` | เชื่อมต่อ OPAC API ของมหาวิทยาลัย |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | ส่งอีเมลแจ้งเตือนตอนตู้เต็ม (รองรับ SMTP+STARTTLS พอร์ต 587 เช่น Gmail) — ถ้าไม่ตั้งค่า ระบบจะข้ามการส่งอีเมลไปเฉยๆ ไม่ error |
 
 ### `frontend/.env` (ใช้โดย frontend เท่านั้น — อ่านตอน build)
 

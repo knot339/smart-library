@@ -4,16 +4,16 @@ services:
     image: postgres:16-alpine
     container_name: smart-library-db
     environment:
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: password123
-      POSTGRES_DB: library
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U admin -d library"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -39,13 +39,18 @@ services:
       - "8080:8080"
     environment:
       - APP_MODE=simulation
-      - DB_HOST=db
-      - DB_USER=admin
-      - DB_PASSWORD=password123
-      - DB_NAME=library
-      - DB_PORT=5432
+      - DB_HOST=${DB_HOST}
+      - DB_USER=${POSTGRES_USER}
+      - DB_PASSWORD=${POSTGRES_PASSWORD}
+      - DB_NAME=${POSTGRES_DB}
+      - DB_PORT=${DB_PORT}
       - OPAC_API_URL=${OPAC_API_URL}
       - OPAC_API_TOKEN=${OPAC_API_TOKEN}
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASSWORD=${SMTP_PASSWORD}
+      - SMTP_FROM=${SMTP_FROM}
     depends_on:
       db:
         condition: service_healthy

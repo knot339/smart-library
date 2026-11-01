@@ -18,9 +18,9 @@
 // เพราะโค้ดไฟล์นี้ใช้ร่วมกันทั้งกล้องหน้าตู้และกล้องในตู้ (คนละบอร์ด แต่ build จากโค้ดเดียวกัน)
 // ส่วน Gateway/Subnet/DNS เป็นของเครือข่ายเดียวกันทั้งระบบ เลยเป็นค่าคงที่ใช้ร่วมได้ที่นี่
 // *** เปลี่ยนเครือข่าย ต้องแก้ทั้ง GATEWAY_IP/DNS1_IP ที่นี่ และ CAMERA_STATIC_IP ใน secrets.h ของทุกบอร์ด ***
-IPAddress GATEWAY_IP(10, 94, 111, 167); // ยืนยันจาก ipconfig จริงบน hotspot "P-Hot"
+IPAddress GATEWAY_IP(10, 239, 123, 98); // ยืนยันจาก ipconfig จริงบน hotspot "P-Hot" (subnet เปลี่ยนเองตอนเปิด-ปิด hotspot ใหม่)
 IPAddress SUBNET_MASK(255, 255, 255, 0);
-IPAddress DNS1_IP(10, 94, 111, 167);
+IPAddress DNS1_IP(10, 239, 123, 98);
 IPAddress DNS2_IP(8, 8, 8, 8);
 
 #define PART_BOUNDARY "123456789000000000000987654321"

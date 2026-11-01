@@ -7,13 +7,14 @@
 // ===== WiFi & MQTT =====
 const int   MQTT_PORT     = 1883;
 
-// ===== Static IP (วง Hotspot มือถือ 10.94.111.x) =====
+// ===== Static IP (วง Hotspot มือถือ "P-Hot" 10.239.123.x — เปลี่ยนจาก 172.19.128.x เพราะมือถืออัปเดต
+// แล้วแจก subnet ใหม่ ไม่ใช่เครือข่ายอื่น) =====
 // กัน IP เปลี่ยนไปมาเวลา DHCP แจกใหม่ — ถ้าเปลี่ยนไปใช้ Hotspot/เครือข่ายอื่น ต้องแก้เลขพวกนี้ให้ตรงกับ
 // subnet ใหม่ด้วย (เช็คจาก Default Gateway/Subnet Mask ตอนคอม server ต่อเครือข่ายนั้นๆ)
-IPAddress STATIC_IP(10, 94, 111, 101);
-IPAddress GATEWAY_IP(10, 94, 111, 167); // ยืนยันจาก ipconfig จริงบน hotspot "P-Hot"
+IPAddress STATIC_IP(10, 239, 123, 101);
+IPAddress GATEWAY_IP(10, 239, 123, 98); // ยืนยันจาก ipconfig จริงบน hotspot "P-Hot" (subnet เปลี่ยนเองตอนเปิด-ปิด hotspot ใหม่)
 IPAddress SUBNET_MASK(255, 255, 255, 0);
-IPAddress DNS1_IP(10, 94, 111, 167);
+IPAddress DNS1_IP(10, 239, 123, 98);
 IPAddress DNS2_IP(8, 8, 8, 8);
 
 // ===== RFID (Serial2) =====
@@ -59,8 +60,15 @@ const unsigned long timeoutGap = 25;
 const int ULTRASONIC_FULL_DISTANCE_CM = 70;      // ระยะที่ถือว่าตู้เต็ม (ปรับตามตำแหน่งติดตั้งจริง)
 const unsigned long ULTRASONIC_CHECK_INTERVAL = 1000; // เช็คระยะทุก 1 วินาที
 const int ULTRASONIC_CONFIRM_COUNT = 3;          // ต้องอ่านค่าเข้าเงื่อนไขติดกันกี่ครั้งก่อนยืนยันเปลี่ยนสถานะ (กันค่าอ่านเพี้ยน/หนังสือขยับผ่าน)
+// ตอนสั่ง Dump หนังสือจะตกผ่านหน้าเซนเซอร์ชั่วขณะ ทำให้อ่านระยะใกล้ผิดพลาดจนเข้าเงื่อนไข "เต็ม" หลอกๆ
+// ได้ (เจอจริงจาก log: ขึ้นเต็มแค่ 3-4 วินาทีตอนเทหนังสือแล้วหายไปเอง) จึงพักการเช็คไว้ช่วงที่มอเตอร์
+// กำลังหด + เวลาให้หนังสือตกตั้งตัวก่อน ค่อยกลับมาเช็คสถานะจริงอีกที — ใช้เป็นค่าเริ่มต้นเฉยๆ ตอนนี้
+// (ค่าจริงที่ใช้งานมาจากคำสั่ง dump แต่ละครั้งที่ backend ส่งมาพร้อม field "settle_ms" ตั้งได้จาก
+// หน้า Dashboard แทน กันค่าคนละที่ไม่ตรงกัน)
+const unsigned long DEFAULT_ULTRASONIC_DUMP_SETTLE_MS = 5000;
 
 unsigned long lastUltrasonicCheck = 0;
+unsigned long ultrasonicSuppressUntil = 0;
 bool cabinetFull = false;
 int fullReadingStreak = 0;
 int emptyReadingStreak = 0;
@@ -72,9 +80,11 @@ int emptyReadingStreak = 0;
 
 int motorSpeed = 255; // ความเร็วสูงสุด (0–255)
 
-// ตั้งค่าระยะเวลาทำงานของมอเตอร์ (ค่าคงที่)
-const unsigned long STEP_DURATION = 10000; // เวลาสำหรับ 1 ช่วง (เช่น จาก Dump -> Open หรือ Open -> Close) คือ 10 วินาที
-const unsigned long MAX_DURATION = 20000;  // เวลาสูงสุด (2 ช่วง: หดสุดไปยืดสุด) คือ 20 วินาที
+// ตั้งค่าระยะเวลาทำงานของมอเตอร์ (ค่าคงที่) — คำนวณจากระยะชัก (stroke) 200mm ของแกนชักตัวจริง
+// ไม่เปลี่ยน แต่เปลี่ยนไปใช้มอเตอร์ตัวใหม่ที่ความเร็ว 96mm/s (เดิม ~10mm/s)
+// 1 ช่วง = ครึ่งระยะชัก = 100mm ÷ 96mm/s = 1041.67ms, 2 ช่วงเต็ม = 200mm ÷ 96mm/s = 2083.33ms
+const unsigned long STEP_DURATION = 1042; // เวลาสำหรับ 1 ช่วง (เช่น จาก Dump -> Open หรือ Open -> Close)
+const unsigned long MAX_DURATION = 2084;  // เวลาสูงสุด (2 ช่วง: หดสุดไปยืดสุด)
 
 // สถานะตำแหน่งมอเตอร์: -1 = Unknown, 0 = Dump (หดสุด), 1 = Open (ตรงกลาง), 2 = Close (ยืดสุด)
 int currentPos = -1;
@@ -152,6 +162,8 @@ void publishFullStatus(bool full) {
 
 // อ่านค่าระยะและตัดสินใจสถานะตู้เต็ม เรียกจาก loop() แบบไม่บล็อกทุก ULTRASONIC_CHECK_INTERVAL
 void checkCabinetFull() {
+  if (millis() < ultrasonicSuppressUntil) return; // พักเช็คช่วงเทหนังสือ (ดูคอมเมนต์ที่ DEFAULT_ULTRASONIC_DUMP_SETTLE_MS)
+
   long dist = readUltrasonicDistanceCm();
   if (dist < 0) return; // อ่านค่าไม่ได้ในรอบนี้ ข้ามไปก่อน
 
@@ -245,6 +257,19 @@ void callback(char* topic, byte* payload, unsigned int length) {
         }
       }
 
+      if (targetPos == 0) {
+        // สั่ง Dump — พักการเช็คตู้เต็มไว้จนกว่ามอเตอร์จะหดสุด + เวลาให้หนังสือตกตั้งตัว (กันอ่านค่าเพี้ยน)
+        // ใช้ค่า settle_ms ที่ backend ส่งมาพร้อมคำสั่ง (ตั้งได้จากหน้า Dashboard) ถ้าไม่ได้ส่งมาด้วย
+        // (เช่นคำสั่งเก่าจาก backend เวอร์ชันก่อนหน้า) ใช้ค่าเริ่มต้นแทน
+        unsigned long settleMs = DEFAULT_ULTRASONIC_DUMP_SETTLE_MS;
+        if (doc.containsKey("settle_ms")) {
+          settleMs = (unsigned long)(int)doc["settle_ms"];
+        }
+        ultrasonicSuppressUntil = millis() + motorRunDuration + settleMs;
+        fullReadingStreak = 0;
+        emptyReadingStreak = 0;
+      }
+
       motorStartTime = millis();
       isMotorRunning = true;
       currentPos = targetPos; // Update position immediately
@@ -252,7 +277,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
     // คำสั่งแมนนวล: สูญเสียตำแหน่ง
     else if (msgValue.startsWith("extend") || msgValue.startsWith("retract")) {
       currentPos = -1; // Reset position state
-      unsigned long duration = 20000; // เวลาทำงานสูงสุดแบบแมนนวลคือ 20 วินาที
+      unsigned long duration = MAX_DURATION; // เวลาทำงานสูงสุดแบบแมนนวล = เวลาวิ่งเต็มระยะชัก
 
       if (msgValue.startsWith("extend")) {
         motorForward(motorSpeed);

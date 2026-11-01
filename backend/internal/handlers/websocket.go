@@ -17,6 +17,9 @@ import (
 type WSMessage struct {
 	Type  string `json:"type"`  // ประเภทของอุปกรณ์ ("barcode" หรือ "rfid", "led", "motor")
 	Value string `json:"value"` // ข้อมูลที่อ่านได้จากอุปกรณ์ หรือสถานะ
+	// เฉพาะคำสั่ง motor "dump" เท่านั้น — ระยะเวลา (ms) ที่ ESP32 ต้องพักเช็คเซนเซอร์ตู้เต็มหลังเทหนังสือ
+	// เสร็จ ส่งมาพร้อมคำสั่งทุกครั้งแทนที่จะ hardcode ไว้ในเฟิร์มแวร์ ตั้งค่าได้จากหน้า Dashboard
+	SettleMs int `json:"settle_ms,omitempty"`
 }
 
 // ตัวแปรสำหรับจัดเก็บรายชื่ออุปกรณ์แท็บเล็ตที่เชื่อมต่ออยู่

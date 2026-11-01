@@ -136,7 +136,40 @@ func ReturnByBorrowerAndBook(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"message": "บันทึกการคืนลงในระบบจำลองสำเร็จ", "record_id": record.ID})
 }
 
-// API เพิ่มเติมสำหรับการจัดการข้อมูลการยืม-คืนแบบทั่วไป
+// บันทึกหลักฐานว่าผู้ใช้งานมาดำเนินการคืนหนังสือแล้วจริง แต่ระบบหาหนังสือที่สแกนได้ไม่พบในระบบ
+// (เช่น RFID/Barcode เพี้ยน หรือหนังสือไม่ได้อยู่ในฐานข้อมูล) ไม่ผูกกับ Book เล่มใดเลย เก็บไว้เป็น
+// หลักฐานในรายการคืนว่ามีคนมาคืนช่วงเวลานี้จริง เผื่อบรรณารักษ์ต้องตรวจสอบย้อนหลังกับกล้องวงจรปิด
+func ReturnFailed(c *fiber.Ctx) error {
+	type FailedReturnRequest struct {
+		BorrowerCode    string `json:"borrower_code"`
+		BorrowerName    string `json:"borrower_name"`
+		ReturnedByPhone string `json:"returned_by_phone"`
+		ScannedBarcode  string `json:"scanned_barcode"` // รหัสที่สแกนได้แต่หาหนังสือในระบบไม่พบ (ถ้ามี)
+	}
+	req := new(FailedReturnRequest)
+	if err := c.BodyParser(req); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "ข้อมูลไม่ถูกต้อง"})
+	}
+
+	now := time.Now()
+	record := models.BorrowRecord{
+		BorrowerCode:    req.BorrowerCode,
+		BorrowerName:    req.BorrowerName,
+		BookBarcode:     req.ScannedBarcode,
+		ReturnedByPhone: req.ReturnedByPhone,
+		ReturnedAt:      &now,
+		Status:          "failed",
+		BorrowedAt:      now,
+		DueDate:         now,
+	}
+
+	if err := database.DB.Create(&record).Error; err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": "ไม่สามารถบันทึกหลักฐานการคืนได้"})
+	}
+
+	return c.JSON(fiber.Map{"message": "บันทึกหลักฐานการคืนผิดพลาดสำเร็จ", "record_id": record.ID})
+}
+
 // API เพิ่มเติมสำหรับการจัดการข้อมูลการยืม-คืนแบบทั่วไป พร้อมเติมชื่อ/ผู้แต่งหนังสือจากฐานข้อมูลของตัวเอง
 // (BorrowRecord เก็บแค่ BookBarcode ไม่มี FK ผูกกับ Book แล้ว ต้อง join เอาเองตรงนี้)
 func GetBorrowRecords(c *fiber.Ctx) error {
@@ -163,12 +196,18 @@ func GetBorrowRecords(c *fiber.Ctx) error {
 	result := make([]fiber.Map, 0, len(records))
 	for _, r := range records {
 		book := bookByBarcode[r.BookBarcode]
+		bookTitle := book.Title
+		// สถานะ "failed" คือกรณีมาคืนจริงแต่ระบบหาหนังสือที่สแกนได้ไม่พบ จึงไม่มี Book ให้ join
+		// เขียนข้อความนี้แทนไว้เป็นหลักฐานว่าเขามาคืนแล้วแค่ระบบคืนให้ไม่ได้ ไม่ใช่ว่าไม่มาคืน
+		if r.Status == "failed" {
+			bookTitle = "⚠️ การคืนผิดพลาด (ไม่พบหนังสือในระบบ)"
+		}
 		result = append(result, fiber.Map{
 			"id":                r.ID,
 			"borrower_code":     r.BorrowerCode,
 			"borrower_name":     r.BorrowerName,
 			"book_barcode":      r.BookBarcode,
-			"book_title":        book.Title,
+			"book_title":        bookTitle,
 			"book_author":       book.Author,
 			"renew":             r.Renew,
 			"borrowed_at":       r.BorrowedAt,

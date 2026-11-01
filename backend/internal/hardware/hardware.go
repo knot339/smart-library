@@ -21,6 +21,11 @@ func init() {
 	Shared = NewMockHardware()
 }
 
+// Hook ให้ชั้นบน (handlers/main) ผูกระบบแจ้งเตือนจริง (เช่นส่งอีเมล) เข้ามาได้ โดยที่ package นี้เอง
+// ไม่ต้องรู้จัก database/SMTP เลย — เรียกเฉพาะตอนตู้ "เพิ่ง" เปลี่ยนจากว่างเป็นเต็มเท่านั้น (ดูใน SetFull)
+// กันไม่ให้ส่งซ้ำทุกครั้งที่ sensor อ่านค่า "เต็ม" เดิมซ้ำๆ ทุก 1 วินาที
+var OnCabinetBecameFull func()
+
 func (m *MockHardware) addLog(msg string) {
 	m.MotorLogs = append([]string{msg}, m.MotorLogs...)
 	if len(m.MotorLogs) > 20 {
@@ -69,9 +74,13 @@ func (m *MockHardware) SetFull(full bool) {
 		// อยู่ในโหมดยังไม่ได้ต่อเซนเซอร์จริง ไม่ว่าใคร/อะไรจะพยายามตั้งเป็นเต็ม ก็บังคับว่างไว้ก่อนเสมอ
 		full = false
 	}
+	wasFull := m.IsFull
 	m.IsFull = full
 	if full {
 		m.addLog("🔴 ตู้เต็ม")
+		if !wasFull && OnCabinetBecameFull != nil {
+			go OnCabinetBecameFull() // รันแยก goroutine กันการส่งอีเมล (I/O เครือข่าย) บล็อกงานหลัก
+		}
 	} else {
 		m.addLog("🟢 ตู้ว่าง")
 	}

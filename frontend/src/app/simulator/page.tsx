@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { API_BASE_URL as API } from "../../lib/config";
+import NavBar from "../../components/NavBar";
 
 export default function SimulatorPage() {
   const [isFull, setIsFull] = useState(false);
@@ -135,7 +136,9 @@ export default function SimulatorPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white p-6">
+    <div className="min-h-screen bg-gray-900 text-white">
+      <NavBar />
+      <div className="p-6">
       <div className="max-w-2xl mx-auto">
 
         {/* ส่วนหัวของหน้าต่างควบคุม (Header) */}
@@ -425,6 +428,7 @@ export default function SimulatorPage() {
           ))}
         </div>
 
+      </div>
       </div>
     </div>
   );

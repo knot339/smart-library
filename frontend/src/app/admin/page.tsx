@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { API_BASE_URL as API } from "../../lib/config";
+import NavBar from "../../components/NavBar";
 
 // ---- ประเภทข้อมูลที่ใช้ภายในระบบ (Types) ----
 type Book = { id: number; isbn: string; barcode: string; bibid: string; title: string; author: string; category: string; stock: number; callno: string; mattypeid: number };
@@ -160,6 +161,7 @@ export default function AdminPage() {
   };
 
   const fmtDate = (d: string) => d ? new Date(d).toLocaleDateString("th-TH") : "-";
+  const fmtTime = (d: string) => d ? new Date(d).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "";
   const isOverdue = (due: string, status: string) => status === "borrowed" && new Date(due) < new Date();
 
   // ค้นหารายการยืม-คืนฝั่ง client (จำนวนรายการไม่มากพอจะต้องแบ่งหน้า/ค้นหาฝั่ง backend แบบตาราง books)
@@ -177,6 +179,8 @@ export default function AdminPage() {
 
   return (
     <div className="min-h-screen bg-gray-100">
+
+      <NavBar />
 
       {/* ส่วนหัวของหน้าเพจ (Header) */}
       <div className="bg-blue-900 text-white px-8 py-4 flex items-center justify-between shadow">
@@ -351,12 +355,17 @@ export default function AdminPage() {
                     <tr key={r.id} className={`${i % 2 === 0 ? "bg-white" : "bg-gray-50"} ${isOverdue(r.due_date, r.status) ? "border-l-4 border-red-400" : ""}`}>
                       <td className="px-4 py-3 font-medium text-gray-800 font-mono">{r.borrower_code || "-"}</td>
                       <td className="px-4 py-3 text-gray-700">{r.borrower_name || "-"}</td>
-                      <td className="px-4 py-3 text-gray-700">{r.book_title || "-"}<br /><span className="text-gray-400 text-xs font-mono">{r.book_barcode}</span></td>
-                      <td className="px-4 py-3 text-gray-500">{r.returned_at ? fmtDate(r.returned_at) : "-"}</td>
+                      <td className={`px-4 py-3 ${r.status === "failed" ? "text-orange-600 font-semibold" : "text-gray-700"}`}>
+                        {r.book_title || "-"}
+                        {r.status !== "failed" && <><br /><span className="text-gray-400 text-xs font-mono">{r.book_barcode}</span></>}
+                      </td>
+                      <td className="px-4 py-3 text-gray-500">
+                        {r.returned_at ? <>{fmtDate(r.returned_at)}<br /><span className="text-xs text-gray-400">{fmtTime(r.returned_at)}</span></> : "-"}
+                      </td>
                       <td className="px-4 py-3 text-gray-600 font-mono">{r.returned_by_phone || "-"}</td>
                       <td className="px-4 py-3">
-                        <span className={`px-2 py-1 rounded text-xs font-bold ${(r.status === "returned" || r.status === "archived") ? "bg-green-100 text-green-700" : isOverdue(r.due_date, r.status) ? "bg-red-100 text-red-700" : "bg-yellow-100 text-yellow-700"}`}>
-                          {(r.status === "returned" || r.status === "archived") ? "คืนแล้ว" : isOverdue(r.due_date, r.status) ? "เกินกำหนด" : "กำลังยืม"}
+                        <span className={`px-2 py-1 rounded text-xs font-bold ${r.status === "failed" ? "bg-orange-100 text-orange-700" : (r.status === "returned" || r.status === "archived") ? "bg-green-100 text-green-700" : isOverdue(r.due_date, r.status) ? "bg-red-100 text-red-700" : "bg-yellow-100 text-yellow-700"}`}>
+                          {r.status === "failed" ? "คืนผิดพลาด" : (r.status === "returned" || r.status === "archived") ? "คืนแล้ว" : isOverdue(r.due_date, r.status) ? "เกินกำหนด" : "กำลังยืม"}
                         </span>
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap">

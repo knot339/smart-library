@@ -23,8 +23,37 @@ export default function TabletPage() {
   const [returnTime, setReturnTime] = useState<Date | null>(null);
   const booksEndRef = useRef<HTMLDivElement>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
+  const voiceAudioRef = useRef<HTMLAudioElement | null>(null);
   const pendingRfidRef = useRef<string[]>([]);
   const initialMotorCheckedRef = useRef(false);
+  const actionLockUntilRef = useRef(0);
+  const lastActivityRef = useRef(Date.now());
+  // กันเรียก processScannedBarcodes ซ้อนกัน (ไม่เหมือนปุ่มที่กันด้วย guardedAction อยู่แล้ว เส้นทางที่
+  // ถูกยิงจาก WebSocket ตอนเครื่องอ่าน RFID/บาร์โค้ดส่งสัญญาณซ้ำไวๆ ไม่ได้ผ่าน guardedAction เลย ต้องกัน
+  // ด้วย ref ที่ปรับค่าทันที ไม่พึ่ง state "loading" เพราะ setState เป็น async ทำให้เช็คไม่ทันการยิงซ้ำในช่วงสั้นๆ)
+  const processingScanRef = useRef(false);
+  // ค่าตั้งต้นก่อนดึงจากเซิร์ฟเวอร์สำเร็จ (เผื่อ fetch ช้า/พัง) — ค่าจริงตั้งได้จากหน้า Dashboard
+  const [idleTimeoutMs, setIdleTimeoutMs] = useState(10000);
+  const [dumpSettleMs, setDumpSettleMs] = useState(5000);
+  const [voiceEnabled, setVoiceEnabled] = useState(true);
+
+  // กันปุ่มเปลี่ยนขั้นตอนหลักถูกกดซ้ำในพริบตา (ดับเบิ้ลแทป หรือจอสัมผัสเด้งสัญญาณซ้ำ) ซึ่งอาจทำให้
+  // แทปที่สองดันไปโดนปุ่มของหน้าถัดไปที่เพิ่ง re-render ขึ้นมาแทนที่ตำแหน่งเดิมพอดี (เช่น กด
+  // "ดำเนินการคืน" ที่หน้าตรวจสอบหนังสือ แล้วแทปที่สองไปโดนปุ่ม "ดำเนินการคืนหนังสือ" ของหน้า
+  // หย่อนหนังสือทันที ทำให้ดูเหมือนข้ามหน้าหย่อนหนังสือไปเลย) — บล็อกการกดซ้ำในช่วงสั้นๆ หลังกดแต่ละครั้ง
+  const guardedAction = (fn: () => void) => () => {
+    const now = Date.now();
+    if (now < actionLockUntilRef.current) return;
+    actionLockUntilRef.current = now + 600;
+    fn();
+  };
+  // ชี้ไปยังฟังก์ชันเวอร์ชันล่าสุดของแต่ละ render เสมอ (sync ไว้ด้านล่าง) — จำเป็นเพราะ WebSocket
+  // onmessage ถูกสร้างครั้งเดียวตอน mount (useEffect deps = []) ถ้าเรียกฟังก์ชันจากตัวแปรตรงๆ
+  // จะได้ closure ของตอน mount ตลอดไป (เช่น borrower จะเป็น null ค้างตลอดไป ทำให้บันทึกข้อมูล
+  // ผู้คืนว่างเปล่าตอนมีการสแกนมาจาก WebSocket จริง) ต้องเรียกผ่าน ref.current นี้แทนเพื่อให้ได้
+  // closure ของ render ล่าสุดที่เห็น state ปัจจุบันจริงๆ
+  const handleIdentifyWithCodeRef = useRef<(code: string) => void>(() => {});
+  const handleCheckBookWithBarcodeRef = useRef<(barcode: string) => void>(() => {});
 
   // เล่นเสียง "ปี๊ป" แจ้งเตือนเมื่อสแกน RFID สำเร็จ (ใช้ Web Audio API ไม่ต้องพึ่งไฟล์เสียง)
   const playBeep = () => {
@@ -46,6 +75,38 @@ export default function TabletPage() {
       oscillator.stop(ctx.currentTime + 0.15);
     } catch (e) {
       console.error("Beep failed", e);
+    }
+  };
+
+  // พูดข้อความด้วย Web Speech API ของเบราว์เซอร์ — ใช้เป็น fallback เวลายังไม่มีไฟล์เสียงจริง/โหลดไฟล์ไม่ได้
+  const speak = (text: string) => {
+    try {
+      if (!("speechSynthesis" in window)) return;
+      window.speechSynthesis.cancel(); // ตัดเสียงพูดก่อนหน้าที่ยังพูดไม่จบทิ้งไปก่อน กันพูดทับกันตอนเปลี่ยนหน้าเร็วๆ
+      const utter = new SpeechSynthesisUtterance(text);
+      utter.lang = "th-TH";
+      utter.rate = 1;
+      window.speechSynthesis.speak(utter);
+    } catch (e) {
+      console.error("Speech synthesis failed", e);
+    }
+  };
+
+  // เล่นไฟล์เสียงพูดที่อัดไว้ล่วงหน้าตามหน้าจอ/สถานะ (วางไฟล์ไว้ที่ public/sounds/<fileKey>.mp3)
+  // ถ้ายังไม่มีไฟล์ หรือโหลด/เล่นไม่ได้ จะพูดด้วยเสียงสังเคราะห์ (speak) แทนไปก่อนโดยอัตโนมัติ
+  // เปลี่ยนมาเป็นไฟล์เสียงจริงแทน Web Speech API ล้วนๆ เพราะคุณภาพ/สำเนียงเสียงอัดจริงจะดีกว่าเสียงสังเคราะห์ของเบราว์เซอร์
+  const playVoice = (fileKey: string, fallbackText: string) => {
+    if (!voiceEnabled) return; // ปิดเสียงพูดแนะนำไว้จากหน้า Dashboard
+    try {
+      if (!voiceAudioRef.current) voiceAudioRef.current = new Audio();
+      const audio = voiceAudioRef.current;
+      audio.pause();
+      audio.currentTime = 0;
+      audio.onerror = () => speak(fallbackText);
+      audio.src = `/sounds/${fileKey}.mp3`;
+      audio.play().catch(() => speak(fallbackText));
+    } catch {
+      speak(fallbackText);
     }
   };
 
@@ -99,7 +160,7 @@ export default function TabletPage() {
         if (!initialMotorCheckedRef.current) {
           initialMotorCheckedRef.current = true;
           if (data.motor_status && data.motor_status !== "closed") {
-            runMotor("close", 20000);
+            runMotor("close", 2083);
           }
         }
       } catch { }
@@ -108,6 +169,40 @@ export default function TabletPage() {
     const t = setInterval(fetch_, 3000);
     return () => clearInterval(t);
   }, []);
+
+  // ดึงค่าตั้งค่าตู้ (ระยะเวลารอเทหนังสือ/ระยะเวลา idle/เปิดปิดเสียง) จากเซิร์ฟเวอร์ครั้งเดียวตอนโหลดหน้า
+  // ตั้งได้จากหน้า Dashboard แทนการ hardcode ไว้ในโค้ด
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch(`${API}/dashboard/system-settings`);
+        const data = await res.json();
+        if (typeof data.dump_settle_ms === "number") setDumpSettleMs(data.dump_settle_ms);
+        if (typeof data.idle_timeout_ms === "number") setIdleTimeoutMs(data.idle_timeout_ms);
+        if (typeof data.voice_enabled === "boolean") setVoiceEnabled(data.voice_enabled);
+      } catch { }
+    })();
+  }, []);
+
+  // เล่นเสียงพูดแนะนำทุกครั้งที่เปลี่ยนขั้นตอนหลัก ช่วยผู้ใช้ที่ไม่ถนัดอ่านหน้าจอ (ยกเว้นหน้าแรก "select-user"
+  // ที่ไม่ต้องมีเสียง) — ชื่อไฟล์ตรงกับค่าของ step พอดี (เช่น public/sounds/check-book.mp3, drop.mp3, ...)
+  useEffect(() => {
+    const fallbackMessages: Partial<Record<Step, string>> = {
+      "identify": "ยินดีต้อนรับเข้าสู่ระบบคืนหนังสือ โปรดสแกนบัตรนักศึกษาหรือพิมพ์เบอร์โทร เพื่อดำเนินการต่อ",
+      "check-book": "กรุณาวางหนังสือที่ต้องการคืนทีละหนึ่งเล่ม โดยนำสันหนังสือเข้าด้านใน",
+      "drop": "ตู้เปิดอยู่ กรุณากดยืนยันเพื่อคืนหนังสือเข้าตู้",
+      "success": "คืนหนังสือสำเร็จแล้ว ขอบคุณที่ใช้บริการ",
+      "not-found": "ไม่พบหนังสือในระบบ กรุณานำหนังสือไปติดต่อบรรณารักษ์ที่เคาน์เตอร์",
+    };
+    const fallbackText = fallbackMessages[step];
+    if (fallbackText) playVoice(step, fallbackText);
+  }, [step]);
+
+  // เล่นเสียงแจ้งเตือนตอนตู้เต็ม (public/sounds/cabinet-full.mp3) — ขึ้นกับ isFull เท่านั้น
+  // จึงเล่นครั้งเดียวตอนเพิ่งตรวจพบว่าเต็ม ไม่เล่นซ้ำทุก 3 วินาทีตามรอบ polling
+  useEffect(() => {
+    if (isFull) playVoice("cabinet-full", "ขออภัย ขณะนี้ตู้รับคืนหนังสือเต็มแล้ว กรุณาติดต่อบรรณารักษ์ที่เคาน์เตอร์");
+  }, [isFull]);
 
   // เชื่อมต่อและจัดการข้อมูลการส่งสัญญาณจากระบบจำลอง (Simulator) ผ่าน WebSocket
   // ต่อใหม่อัตโนมัติถ้าหลุด (เช่น backend รีสตาร์ท/เน็ตกระตุก) ไม่งั้นถ้าหลุดแล้วค้างตลอด
@@ -142,6 +237,7 @@ export default function TabletPage() {
 
       ws.onmessage = (event) => {
         const msg = JSON.parse(event.data);
+        lastActivityRef.current = Date.now(); // ถือเป็นการใช้งานหน้าจอ กันตัวจับเวลา idle รีเซ็ตกลางคัน
 
         if (msg.type === "barcode") {
           // จัดการเมื่อได้รับข้อมูลประเภท Barcode เพื่อระบุตัวตนผู้ใช้งาน
@@ -149,7 +245,8 @@ export default function TabletPage() {
           setStep((prev) => {
             if (prev === "identify") {
               // ประมวลผลและยืนยันตัวตนอัตโนมัติเมื่อได้รับข้อมูลที่ถูกต้อง
-              setTimeout(() => handleIdentifyWithCode(msg.value), 100);
+              // เรียกผ่าน ref เพื่อให้ได้ฟังก์ชันเวอร์ชันล่าสุด ไม่ใช่ closure ค้างจากตอน mount
+              setTimeout(() => handleIdentifyWithCodeRef.current(msg.value), 100);
             }
             return prev;
           });
@@ -162,7 +259,8 @@ export default function TabletPage() {
           setStep((prev) => {
             if (prev === "check-book") {
               // เสียงดังเฉพาะตอนเจอหนังสือเล่มใหม่จริงๆ (เช็คในฟังก์ชันประมวลผล) ไม่ใช่ทุกครั้งที่สแกน
-              setTimeout(() => handleCheckBookWithBarcode(msg.value), 100);
+              // เรียกผ่าน ref เพื่อให้ได้ฟังก์ชันเวอร์ชันล่าสุด (เห็นค่า borrower ปัจจุบันจริงๆ)
+              setTimeout(() => handleCheckBookWithBarcodeRef.current(msg.value), 100);
             } else {
               // สแกนเข้ามาก่อนที่ตู้จะเปิดเสร็จ (ยังอยู่ขั้นตอน identify ระหว่างรอมอเตอร์)
               // เก็บไว้ก่อน แล้วค่อยประมวลผลทีหลังตอนเข้าสู่ขั้นตอนตรวจสอบหนังสือจริงๆ
@@ -306,7 +404,7 @@ export default function TabletPage() {
         type: "guest"
       });
       setActiveBorrows([]);
-      await runMotor("open", 10000);
+      await runMotor("open", 1042);
       setStep("check-book");
       setLoading(false);
       return;
@@ -316,11 +414,12 @@ export default function TabletPage() {
       const res = await fetch(`${API}/borrower/code/${code}`);
       const data = await res.json();
       if (!res.ok) {
-        setErrorMsg("ไม่พบข้อมูล กรุณาตรวจสอบรหัสอีกครั้ง");
+        setErrorMsg("ไม่พบรหัสผู้ใช้งาน กรุณาใส่เบอร์โทรหรือติดต่อบรรณารักษ์ที่เคาน์เตอร์");
+        playVoice("identify-not-found", "ไม่พบรหัสผู้ใช้งาน กรุณาใส่เบอร์โทรหรือติดต่อบรรณารักษ์ที่เคาน์เตอร์");
         setLoading(false);
         return;
       }
-      
+
       // แปลงข้อมูล PatronDetail ที่ได้จาก OPAC ให้อยู่ในรูป Borrower
       setBorrower({
         id: data.USERID || 0,
@@ -333,7 +432,7 @@ export default function TabletPage() {
       // ดึงข้อมูลรายการหนังสือที่ผู้ใช้งานรายดังกล่าวยังคงทำการยืมอยู่ (ไม่รวมเล่มที่คืนเข้าตู้ไปแล้ว)
       setActiveBorrows(await fetchActiveBorrowsExcludingCabinet(data.BARCODE));
 
-      await runMotor("open", 10000);
+      await runMotor("open", 1042);
       setStep("check-book");
     } catch {
       setErrorMsg("เกิดข้อผิดพลาด กรุณาลองใหม่");
@@ -345,9 +444,14 @@ export default function TabletPage() {
   // เพราะเครื่องอ่าน RFID อาจจับสัญญาณหนังสือเล่มที่เพิ่งคืนไปแล้ว (ยังอยู่ในรัศมีก่อนถูกเทออก)
   // ติดมาพร้อมเล่มใหม่ในข้อความเดียวกันได้ ถ้าใช้ทั้งหมดจะทำให้เล่มเก่าโผล่ขึ้นมาซ้ำ
   const processScannedBarcodes = async (raw: string) => {
+    // กันเรียกซ้อน — จำเป็นโดยเฉพาะกับเส้นทางที่ถูกยิงจาก WebSocket ตรงๆ (ไม่ผ่านปุ่ม/guardedAction)
+    // เช่นเครื่องอ่าน RFID/บาร์โค้ดยิงสัญญาณซ้ำไวๆ ให้เรื่อยเดียวกัน จะได้ไม่บันทึกหลักฐาน "คืนผิดพลาด"
+    // ซ้ำหลายแถว หรือสั่งปิดฝาซ้อนกัน
+    if (processingScanRef.current) return;
     const barcodes = raw.split(/[\s,]+/).filter(b => b.trim() !== "");
     if (barcodes.length === 0) return;
 
+    processingScanRef.current = true;
     const latest = barcodes[barcodes.length - 1].trim();
 
     setLoading(true);
@@ -362,7 +466,6 @@ export default function TabletPage() {
         const cabinetData = await cabinetRes.json();
         const alreadyInCabinet = (cabinetData.books || []).some((b: { barcode: string }) => b.barcode === latest);
         if (alreadyInCabinet) {
-          setLoading(false);
           return;
         }
       }
@@ -370,7 +473,12 @@ export default function TabletPage() {
       const res = await fetch(`${API}/book/barcode/${latest}`);
       const data = await res.json();
       if (!res.ok) {
-        setErrorMsg(`${latest}: ${data.error || "ไม่พบหนังสือ"}`);
+        // ไม่พบหนังสือในระบบ — บันทึกหลักฐานว่ามาคืนแล้วจริง ปิดฝาตู้ แล้วขึ้นหน้าแจ้งเตือนให้
+        // ติดต่อบรรณารักษ์ (เหมือนหน้าตู้เต็ม แค่เปลี่ยนข้อความ) แทนการให้สแกนซ้ำเรื่อยๆ
+        await recordFailedReturn(latest);
+        await runMotor("close", 1042); // ตู้อยู่ที่ตำแหน่งเปิดอยู่ (check-book) ปิดจากเปิด = 1 ช่วงเท่านั้น
+        setStep("not-found");
+        return;
       } else {
         setBooksToReturn([data]); // แทนที่ด้วยเล่มล่าสุดเล่มเดียว ไม่สะสมหลายเล่ม
         setInputBarcode(latest); // โชว์แค่ค่าของเล่มที่จะคืนจริงๆ เท่านั้น (เล่มเก่า/ซ้ำไม่อัปเดตช่องนี้)
@@ -378,14 +486,32 @@ export default function TabletPage() {
       }
     } catch {
       setErrorMsg(`${latest}: เกิดข้อผิดพลาด`);
+    } finally {
+      setLoading(false);
+      processingScanRef.current = false;
     }
-
-    setLoading(false);
   };
 
   // ขั้นตอนที่ 2: ตรวจสอบข้อมูลรายละเอียดของหนังสือโดยใช้รหัส Barcode
   const handleCheckBook = async () => {
     await processScannedBarcodes(inputBarcode);
+  };
+
+  // บันทึกหลักฐานไว้ในระบบว่าผู้ใช้งานมาดำเนินการคืนหนังสือแล้วจริง แต่สแกนแล้วหาหนังสือในระบบไม่พบ
+  // (กันไม่ให้ถูกเข้าใจผิดว่าไม่ได้มาคืน เผื่อบรรณารักษ์ต้องตรวจสอบย้อนหลังกับกล้องวงจรปิด)
+  const recordFailedReturn = async (scannedBarcode: string) => {
+    try {
+      await fetch(`${API}/borrows/return-failed`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          borrower_code: borrower?.code || "",
+          borrower_name: borrower?.name || "",
+          returned_by_phone: borrower?.phone || "",
+          scanned_barcode: scannedBarcode,
+        }),
+      });
+    } catch { }
   };
 
   // ขั้นตอนที่ 3: ดำเนินการคืนหนังสือเข้าตู้ พร้อมบันทึกข้อมูลการคืนลงในฐานข้อมูล
@@ -423,15 +549,15 @@ export default function TabletPage() {
       await fetch(`${API}/simulate/return-book`, { method: "POST" });
 
       // สั่งการให้ระบบฮาร์ดแวร์ดำเนินการเทหนังสือ (Dump) ลงในตู้จัดเก็บ และรอ 10 วินาที
-      await runMotor("dump", 10000);
+      await runMotor("dump", 1042);
 
-      // หน่วงเวลา 5 วินาที เพื่อให้แน่ใจว่าหนังสือตกลงในตู้จัดเก็บอย่างสมบูรณ์
+      // หน่วงเวลาเพื่อให้แน่ใจว่าหนังสือตกลงในตู้จัดเก็บอย่างสมบูรณ์ (ตั้งค่าได้จากหน้า Dashboard)
       setMotorLoading(true);
-      await new Promise(resolve => setTimeout(resolve, fastMode ? 500 : 5000));
+      await new Promise(resolve => setTimeout(resolve, fastMode ? 500 : dumpSettleMs));
       setMotorLoading(false);
 
       // สั่งการปิดตู้รับคืน (ยืดแกนชักจนสุด) และรอ 20 วินาที
-      await runMotor("close", 20000);
+      await runMotor("close", 2083);
       setReturnTime(new Date());
       setStep("success");
     } catch {
@@ -443,7 +569,7 @@ export default function TabletPage() {
   const handleReset = async () => {
     // ดำเนินการปิดตู้รับคืนหากยังเปิดอยู่ พร้อมทั้งรีเซ็ตข้อมูลการทำรายการทั้งหมด
     if (motorOpen) {
-      await runMotor("close", 10000);
+      await runMotor("close", 1042);
     }
     pendingRfidRef.current = []; // ล้างสแกนค้างท่อ กันหลุดไปติดรายการของคนถัดไป
     setStep("select-user");
@@ -466,7 +592,7 @@ export default function TabletPage() {
     if (code.match(/^0\d{9}$/)) {
       setBorrower({ id: 0, code: code, name: "ผู้มาคืนหนังสือ", phone: code, type: "guest" });
       setActiveBorrows([]);
-      await runMotor("open", 10000);
+      await runMotor("open", 1042);
       setStep("check-book");
       setLoading(false);
       return;
@@ -475,7 +601,12 @@ export default function TabletPage() {
     try {
       const res = await fetch(`${API}/borrower/code/${code}`);
       const data = await res.json();
-      if (!res.ok) { setErrorMsg("ไม่พบข้อมูล กรุณาใส่รหัสที่ถูกต้อง"); setLoading(false); return; }
+      if (!res.ok) {
+        setErrorMsg("ไม่พบรหัสผู้ใช้งาน กรุณาใส่เบอร์โทรหรือติดต่อบรรณารักษ์ที่เคาน์เตอร์");
+        playVoice("identify-not-found", "ไม่พบรหัสผู้ใช้งาน กรุณาใส่เบอร์โทรหรือติดต่อบรรณารักษ์ที่เคาน์เตอร์");
+        setLoading(false);
+        return;
+      }
       
       setBorrower({
         id: data.USERID || 0,
@@ -487,7 +618,7 @@ export default function TabletPage() {
 
       setActiveBorrows(await fetchActiveBorrowsExcludingCabinet(data.BARCODE));
 
-      await runMotor("open", 10000);
+      await runMotor("open", 1042);
       setStep("check-book");
     } catch { setErrorMsg("เกิดข้อผิดพลาด"); }
     setLoading(false);
@@ -496,6 +627,37 @@ export default function TabletPage() {
   const handleCheckBookWithBarcode = async (barcode: string) => {
     await processScannedBarcodes(barcode);
   };
+
+  // sync ref ให้ชี้ไปยังฟังก์ชันเวอร์ชันล่าสุดเสมอ (ไม่มี dependency array จึงรันหลังทุก render)
+  useEffect(() => {
+    handleIdentifyWithCodeRef.current = handleIdentifyWithCode;
+    handleCheckBookWithBarcodeRef.current = handleCheckBookWithBarcode;
+  });
+
+  // จับเวลาไม่มีการใช้งาน (แทะจอ/กดปุ่ม/คีย์บอร์ด) — แตะหน้าจอหรือกดปุ่มใดๆ จะรีเซ็ตตัวจับเวลาใหม่
+  useEffect(() => {
+    const markActivity = () => { lastActivityRef.current = Date.now(); };
+    window.addEventListener("pointerdown", markActivity);
+    window.addEventListener("keydown", markActivity);
+    return () => {
+      window.removeEventListener("pointerdown", markActivity);
+      window.removeEventListener("keydown", markActivity);
+    };
+  }, []);
+
+  // ถ้าอยู่ขั้นตอนกลางทาง (ไม่ใช่หน้าแรก) แล้วไม่มีการใช้งานเกิน 10 วินาที ให้กลับหน้าแรกอัตโนมัติ
+  // กันเครื่องค้างอยู่กลางขั้นตอนเพราะมีคนเดินออกไปโดยไม่กดอะไรต่อ — ไม่รีเซ็ตขณะกำลังรอมอเตอร์/
+  // บันทึกข้อมูลอยู่ (loading/motorLoading) เพราะเป็นงานที่ดำเนินไปเองอัตโนมัติอยู่แล้ว ไม่ได้รอผู้ใช้ทำอะไรต่อ
+  useEffect(() => {
+    lastActivityRef.current = Date.now();
+    const t = setInterval(() => {
+      if (step === "select-user" || loading || motorLoading) return;
+      if (Date.now() - lastActivityRef.current > idleTimeoutMs) {
+        handleReset();
+      }
+    }, 1000);
+    return () => clearInterval(t);
+  }, [step, loading, motorLoading, idleTimeoutMs]);
 
   const steps = [
     { key: "select-user", label: "เริ่มต้น" }, // เปลี่ยนจากคำว่า "เลือกผู้ใช้" เป็น "เริ่มต้น" เพื่อความเข้าใจที่ง่ายขึ้น
@@ -662,6 +824,84 @@ export default function TabletPage() {
     );
   }
 
+  // ตรวจสอบและแสดงผลหน้าจอแจ้งเตือน ในกรณีที่สแกนหนังสือแล้วหาในระบบไม่พบ (RFID/Barcode เพี้ยน
+  // หรือหนังสือไม่ได้อยู่ในฐานข้อมูล) — ปิดฝาตู้ไปแล้วตั้งแต่ตอนตรวจพบ บันทึกหลักฐานไว้ในระบบแล้วว่า
+  // ผู้ใช้มาคืนจริง จึงให้ผู้ใช้กดกลับไปหน้าแรกเองเพื่อเริ่มทำรายการใหม่ (ไม่ auto refresh เหมือนตู้เต็ม
+  // เพราะเป็นสถานะเฉพาะของรายการนี้ ไม่ใช่สถานะของตู้โดยรวม)
+  if (step === "not-found") {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-blue-950 to-blue-900 flex flex-col select-none relative">
+        <AnimatedBackground />
+        <div className="relative z-10 flex flex-col flex-1">
+
+          {/* Header */}
+          <div className="bg-blue-950 px-10 py-6 flex justify-between items-center border-b border-blue-800 shadow-lg">
+            <div className="flex items-center gap-5">
+              <div className="bg-white rounded-full w-16 h-16 flex items-center justify-center p-2">
+                <img src="/images/LOGO-RUTS-07-2-copy.png" alt="RUTS Logo" className="w-full h-full object-contain" />
+              </div>
+              <div>
+                <p className="text-blue-300 text-base tracking-widest uppercase mb-1">Book Return Station</p>
+                <h1 className="text-white text-2xl font-bold">ระบบรับคืนหนังสืออัตโนมัติ</h1>
+              </div>
+            </div>
+            <div className="text-right">
+              <p className="text-blue-400 text-base mb-1">เวลาปัจจุบัน</p>
+              <p className="text-white text-4xl font-mono font-bold">{time}</p>
+              <div className="flex items-center gap-2 mt-2 justify-end">
+                <div className="w-3 h-3 rounded-full bg-red-400" />
+                <p className="text-base text-red-300">ไม่พบหนังสือในระบบ</p>
+              </div>
+            </div>
+          </div>
+
+          {/* ส่วนแสดงหน้าจอแจ้งเตือนเมื่อสแกนหนังสือแล้วหาในระบบไม่พบ */}
+          <div className="flex-1 flex items-center justify-center p-4 min-h-0">
+            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md p-6 text-center flex flex-col justify-center min-h-[400px]">
+
+              <div className="w-24 h-24 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                <span className="text-5xl">❓</span>
+              </div>
+
+              <h2 className="text-3xl font-bold text-red-600 mb-3">
+                ไม่พบหนังสือในระบบ
+              </h2>
+
+              <p className="text-gray-600 mb-2 text-xl font-semibold">
+                ไม่สามารถตรวจสอบหนังสือเล่มนี้ได้
+              </p>
+              <p className="text-gray-500 text-lg mb-5">
+                ระบบได้บันทึกไว้แล้วว่าท่านมาดำเนินการคืนหนังสือ
+              </p>
+
+              <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 mb-5 text-left">
+                <p className="text-blue-700 font-bold text-lg mb-2">📋 กรุณาดำเนินการดังนี้</p>
+                <ul className="text-blue-600 text-base space-y-2 pl-2">
+                  <li>• นำหนังสือเล่มนี้ไปติดต่อบรรณารักษ์ที่เคาน์เตอร์</li>
+                  <li>• แจ้งเจ้าหน้าที่ว่าระบบสแกนหนังสือไม่พบ</li>
+                  <li>• เจ้าหน้าที่จะตรวจสอบและบันทึกการคืนให้ท่านต่อไป</li>
+                </ul>
+              </div>
+
+              <button
+                onClick={handleReset}
+                className="w-full bg-blue-700 hover:bg-blue-800 active:scale-95 text-white font-bold py-4 rounded-2xl text-xl transition shadow-lg"
+              >
+                🔄 กลับสู่หน้าแรก
+              </button>
+            </div>
+          </div>
+
+          {/* Footer */}
+          <div className="relative z-10 text-center py-6 text-white text-xl bg-blue-950 border-t border-blue-800">
+            หากพบปัญหา กรุณาติดต่อบรรณารักษ์ที่เคาน์เตอร์
+          </div>
+
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="h-[100dvh] bg-gradient-to-b from-blue-950 to-blue-900 flex flex-col select-none relative overflow-hidden">
       <AnimatedBackground />
@@ -719,7 +959,7 @@ export default function TabletPage() {
             <div className="flex-1 hidden lg:block" />
 
             {/* กล่องตรงกลาง (Center Card) */}
-            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg p-6 flex flex-col relative min-h-[450px] h-full shrink-0 overflow-hidden z-10 mx-auto">
+            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg p-6 flex flex-col relative min-h-[450px] h-full shrink-0 overflow-y-auto z-10 mx-auto">
             
             {/* Motor Loading Overlay for the Card */}
             {motorLoading && (
@@ -756,7 +996,7 @@ export default function TabletPage() {
                 <h2 className="text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-blue-900 mb-3">ยินดีต้อนรับ</h2>
                 <p className="text-gray-600 mb-2 text-xl font-semibold">ระบบรับคืนหนังสืออัตโนมัติ</p>
                 <p className="text-gray-400 mb-8 text-base">Smart Library Return Station</p>
-                <button onClick={handleStart}
+                <button onClick={guardedAction(handleStart)}
                   className="w-full bg-gradient-to-r from-blue-600 to-blue-800 hover:from-blue-700 hover:to-blue-900 active:scale-95 text-white font-bold py-5 rounded-2xl text-2xl transition-all shadow-xl transform hover:shadow-2xl">
                   เริ่มต้น
                 </button>
@@ -776,15 +1016,15 @@ export default function TabletPage() {
                   placeholder="รหัสนักศึกษา หรือ เบอร์โทร"
                   value={inputCode}
                   onChange={(e) => setInputCode(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleIdentify()}
+                  onKeyDown={(e) => e.key === "Enter" && guardedAction(handleIdentify)()}
                   className="w-full border-2 border-blue-200 rounded-2xl px-6 py-6 text-3xl text-center tracking-widest mb-4 focus:outline-none focus:border-blue-500 text-gray-800"
                 />
-                {errorMsg && <p className="text-red-500 text-lg mb-4">{errorMsg}</p>}
-                <button onClick={handleIdentify} disabled={loading}
-                  className="w-full bg-blue-700 hover:bg-blue-800 disabled:bg-gray-300 text-white font-bold py-6 rounded-2xl text-2xl transition mt-4">
+                {errorMsg && <p className="text-red-500 text-sm mb-2">{errorMsg}</p>}
+                <button onClick={guardedAction(handleIdentify)} disabled={loading}
+                  className="w-full bg-blue-700 hover:bg-blue-800 disabled:bg-gray-300 text-white font-bold py-6 rounded-2xl text-2xl transition mt-2">
                   {loading ? "⏳ กำลังตรวจสอบ..." : "ยืนยัน →"}
                 </button>
-                <button onClick={handleReset} className="w-full mt-5 text-gray-400 hover:text-gray-600 text-lg py-3">← ย้อนกลับ</button>
+                <button onClick={handleReset} className="w-full mt-2 text-gray-400 hover:text-gray-600 text-lg py-3">← ย้อนกลับ</button>
               </div>
             )}
 
@@ -821,12 +1061,12 @@ export default function TabletPage() {
                     readOnly
                     placeholder="รอการสแกนจากเครื่องอ่าน..."
                     value={inputBarcode}
-                    onKeyDown={(e) => e.key === "Enter" && handleCheckBook()}
+                    onKeyDown={(e) => e.key === "Enter" && guardedAction(handleCheckBook)()}
                     className="w-full border-2 border-blue-200 rounded-2xl px-6 py-4 text-xl text-center tracking-widest mb-3 focus:outline-none focus:border-blue-500 text-gray-800 bg-gray-50 cursor-default"
                   />
                   {errorMsg && <p className="text-red-500 text-base mb-3">{errorMsg}</p>}
                   <div className="flex gap-3">
-                    <button onClick={() => setStep("drop")} disabled={booksToReturn.length === 0}
+                    <button onClick={guardedAction(() => setStep("drop"))} disabled={booksToReturn.length === 0}
                       className="w-full bg-blue-700 hover:bg-blue-800 disabled:bg-gray-300 text-white font-bold py-4 rounded-2xl text-xl transition">
                       ดำเนินการคืน ({booksToReturn.length} เล่ม) →
                     </button>
@@ -868,7 +1108,7 @@ export default function TabletPage() {
                   </div>
 
                   {errorMsg && <p className="text-red-500 text-base mb-3">{errorMsg}</p>}
-                  <button onClick={handleDropBook} disabled={loading}
+                  <button onClick={guardedAction(handleDropBook)} disabled={loading}
                     className="w-full bg-green-600 hover:bg-green-700 disabled:bg-gray-300 text-white font-bold py-4 rounded-2xl text-2xl transition shadow-lg active:scale-95">
                     {loading ? "⏳ กำลังบันทึก..." : "✅ ดำเนินการคืนหนังสือ"}
                   </button>
@@ -907,13 +1147,13 @@ export default function TabletPage() {
                 <div className="flex flex-col gap-3 flex-none mt-4">
                   {/* ปุ่มคำสั่งสำหรับการดำเนินการคืนหนังสือเล่มถัดไป ด้วยข้อมูลผู้ใช้งานเดิม */}
                   <button
-                    onClick={async () => {
+                    onClick={guardedAction(async () => {
                       setBooksToReturn([]);
                       setInputBarcode("");
                       setErrorMsg("");
-                      await runMotor("open", 10000);
+                      await runMotor("open", 1042);
                       setStep("check-book"); // ข้ามขั้นตอนไปสู่หน้าการตรวจสอบรหัสหนังสือ
-                    }}
+                    })}
                     className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-4 rounded-2xl text-xl transition active:scale-95"
                   >
                     📚 คืนเล่มถัดไป
