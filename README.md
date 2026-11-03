@@ -359,11 +359,20 @@ cp firmware/libraryBookReturnESP32/include/secrets.h.example firmware/libraryBoo
 cp firmware/libraryBookReturnCAM/include/secrets.h.example firmware/libraryBookReturnCAM/include/secrets.h
 ```
 
-ใส่ WiFi SSID/Password และ IP ของเครื่องที่รัน MQTT broker (`MQTT_SERVER`) ให้ตรงกับเครื่องจริง แล้ว build/upload ผ่าน PlatformIO ตามปกติ (เปิดโฟลเดอร์ `firmware/libraryBookReturnESP32` หรือ `firmware/libraryBookReturnCAM` ด้วย VS Code ที่ลง PlatformIO extension แล้ว กด Upload) — ไฟล์ `secrets.h` ไม่ถูก commit เข้า git (มีแค่ `.example` ให้)
+ใส่ WiFi SSID/Password และ IP ของเครื่องที่รัน MQTT broker (`MQTT_SERVER`) ให้ตรงกับเครื่องจริง — ไฟล์ `secrets.h` ไม่ถูก commit เข้า git (มีแค่ `.example` ให้)
 
 **ถ้าเครือข่ายใหม่ไม่เหมือนเดิม** ต้องแก้ค่า static IP ใน `main.cpp` ของทั้ง 2 บอร์ดด้วย (`STATIC_IP`/`GATEWAY_IP`/`SUBNET_MASK` ของมอเตอร์, `CAMERA_STATIC_IP` ใน `secrets.h` ของกล้อง — หน้าตู้/ในตู้ต้องตั้งคนละค่ากัน) ดูวิธีหา Gateway/Subnet จริงได้จาก `ipconfig`/`ip addr` ตอนเครื่อง server ต่อเครือข่ายนั้น และดู[หมายเหตุเรื่อง subnet ของ hotspot เปลี่ยนเองได้](#ฮาร์ดแวร์--firmware)ด้านบนประกอบด้วย
 
 กล้องแต่ละบอร์ด (หน้าตู้/ในตู้) ใช้โค้ด `main.cpp` เดียวกัน แต่ต้องแก้ `CAMERA_STATIC_IP` ใน `secrets.h` ให้ต่างกันก่อน upload แต่ละบอร์ด ไม่งั้น IP จะชนกัน
+
+**วิธีอัปโหลด — ทั้ง 2 บอร์ดต่างกัน:**
+
+- **ESP32 มอเตอร์**: เสียบสาย USB เข้าคอมได้เลย เปิดโฟลเดอร์ `firmware/libraryBookReturnESP32` ด้วย VS Code ที่ลง PlatformIO extension แล้วกด Upload ได้ทันที ไม่ต้องถอดอะไรออกก่อน
+- **ESP32-CAM**: บอร์ดนี้ขา GPIO ที่ใช้ต่อ SD การ์ดชนกับขาที่ใช้ตอนโหลดโปรแกรมผ่าน USB-to-Serial **ต้องถอด SD การ์ดออกก่อนเสียบสายอัปโหลดเสมอ** ไม่งั้นจะอัปโหลดไม่ผ่าน/ค้าง ขั้นตอนที่ถูกต้อง:
+  1. ถอด SD การ์ดออกจากบอร์ดก่อน
+  2. เสียบสาย USB-to-Serial เข้าบอร์ด เปิดโฟลเดอร์ `firmware/libraryBookReturnCAM` ด้วย PlatformIO แล้วกด Upload
+  3. อัปโหลดเสร็จแล้ว **ถอดสายออกก่อน** แล้วค่อยใส่ SD การ์ดกลับเข้าไป
+  4. เสียบสาย USB เข้าใหม่ (หรือต่อไฟเข้าใช้งานปกติ) บอร์ดถึงจะบูตขึ้นมาทำงานพร้อม SD การ์ดได้ถูกต้อง — ถ้าเสียบสาย/จ่ายไฟตอนที่ยังไม่ได้ใส่ SD การ์ดกลับ บอร์ดจะบันทึกวิดีโอไม่ได้
 
 ### 7. ตรวจสอบว่าระบบพร้อมใช้งานจริง
 
