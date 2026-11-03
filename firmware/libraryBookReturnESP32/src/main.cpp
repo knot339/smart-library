@@ -54,6 +54,10 @@ const unsigned long timeoutGap = 25;
 // ===== LED =====
 #define LED_PIN 2
 
+// ===== กลอนไฟฟ้าล็อกตู้ (รีเลย์ Active-LOW) — คนละตัวกับมอเตอร์แกนชักที่รับหนังสือ ใช้ล็อก/ปลดล็อกฝาตู้ทั้งบาน =====
+// ขาที่ยังว่างอยู่บนบอร์ดนี้ (ไม่ชนกับ RFID/LED/Ultrasonic/Motor ด้านบน)
+#define LOCK_PIN 23
+
 // ===== Ultrasonic (HC-SR04) ตรวจจับตู้เต็ม =====
 #define ULTRASONIC_TRIG_PIN 12
 #define ULTRASONIC_ECHO_PIN 13
@@ -118,6 +122,14 @@ void motorForward(int spd) {
 void motorBackward(int spd) {
   analogWrite(MOTOR_RPWM, 0);
   analogWrite(MOTOR_LPWM, spd);
+}
+// -----------------------------------
+
+// ----- ฟังก์ชันควบคุมกลอนไฟฟ้าล็อกตู้ -----
+// โมดูลรีเลย์เป็นแบบ Active-LOW (ของจริงที่ใช้ — ส่งสัญญาณ LOW แล้วรีเลย์ถึงจะ trigger/ทำงาน)
+void setLock(bool locked) {
+  digitalWrite(LOCK_PIN, locked ? LOW : HIGH);
+  Serial.printf("[LOCK] %s\n", locked ? "LOCK" : "UNLOCK");
 }
 // -----------------------------------
 
@@ -204,8 +216,13 @@ void callback(char* topic, byte* payload, unsigned int length) {
 
   Serial.printf(">> Type: %s, Value: %s\n", msgType.c_str(), msgValue.c_str());
 
+  // ----- กลอนไฟฟ้าล็อกตู้ -----
+  if (msgType == "lock") {
+    setLock(msgValue != "unlock"); // ค่าอื่นนอกจาก "unlock" ทั้งหมดถือเป็นสั่งล็อก (fail-secure)
+  }
+
   // ----- LED -----
-  if (msgType == "led") {
+  else if (msgType == "led") {
     if (msgValue == "on") {
       digitalWrite(LED_PIN, HIGH);
       Serial.println("[LED] ON");
@@ -334,6 +351,11 @@ void setup() {
   // LED
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
+
+  // กลอนไฟฟ้าล็อกตู้ — ล็อกไว้ก่อนเป็นค่าเริ่มต้นตอนบูตเสมอ (fail-secure) จนกว่าจะมีคนสั่งปลดล็อก
+  // จากหน้า Dashboard
+  pinMode(LOCK_PIN, OUTPUT);
+  setLock(true);
 
   // Ultrasonic (HC-SR04)
   pinMode(ULTRASONIC_TRIG_PIN, OUTPUT);

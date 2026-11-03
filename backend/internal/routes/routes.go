@@ -28,6 +28,7 @@ func Setup(app *fiber.App) {
 	app.Post("/api/dashboard/motor/open", handlers.OpenMotor)
 	app.Post("/api/dashboard/motor/close", handlers.CloseMotor)
 	app.Post("/api/dashboard/motor/dump", handlers.DumpMotor)
+	app.Post("/api/dashboard/cabinet/lock", handlers.SetCabinetLock)
 	app.Post("/api/dashboard/cabinet/set-full", handlers.SetCabinetFull)
 	app.Get("/api/dashboard/books-in-cabinet", handlers.GetBooksInCabinet)
 	app.Get("/api/dashboard/recent-returns", handlers.GetRecentReturns)

@@ -14,6 +14,7 @@ func GetStatus(c *fiber.Ctx) error {
 		"fast_mode":       hardware.Shared.FastMode,
 		"force_empty":     hardware.Shared.ForceEmpty,
 		"esp32_connected": hardware.Shared.ESP32Connected,
+		"is_locked":       hardware.Shared.IsLocked,
 		"status":          "Ready",
 	})
 }

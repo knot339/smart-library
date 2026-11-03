@@ -65,8 +65,39 @@ func GetCabinetStatus(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{
 		"is_full":      hardware.Shared.IsFull,
 		"motor_status": hardware.Shared.MotorStatus,
+		"is_locked":    hardware.Shared.IsLocked,
 		"status":       "online",
 	})
+}
+
+// สั่งล็อก/ปลดล็อกกลอนไฟฟ้าของตู้ (คนละตัวกับมอเตอร์แกนชักที่รับหนังสือ) — อัปเดตสถานะในฝั่ง backend
+// ทันทีแบบ optimistic (เหมือนกับ OpenMotor/CloseMotor/DumpMotor) ไม่รอ ESP32 ยืนยันกลับ
+func SetCabinetLock(c *fiber.Ctx) error {
+	type SetLockRequest struct {
+		Locked bool `json:"locked"`
+	}
+	req := new(SetLockRequest)
+	if err := c.BodyParser(req); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "ข้อมูลไม่ถูกต้อง"})
+	}
+
+	hardware.Shared.SetLocked(req.Locked)
+	if MQTTClient != nil && MQTTClient.IsConnected() {
+		value := "lock"
+		if !req.Locked {
+			value = "unlock"
+		}
+		msg := WSMessage{Type: "lock", Value: value}
+		payload, _ := json.Marshal(msg)
+		token := MQTTClient.Publish("smartlibrary/esp32/control", 0, false, payload)
+		token.WaitTimeout(2 * time.Second)
+	}
+
+	message := "ล็อกตู้แล้ว"
+	if !req.Locked {
+		message = "ปลดล็อกตู้แล้ว"
+	}
+	return c.JSON(fiber.Map{"message": message, "is_locked": hardware.Shared.IsLocked})
 }
 
 // ดึงค่าระยะเวลารอให้หนังสือตกลงในตู้หลังเทเสร็จที่ตั้งไว้ (ถ้ายังไม่เคยตั้งค่าไว้เลย คืนค่าเริ่มต้น)

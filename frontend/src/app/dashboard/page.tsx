@@ -142,6 +142,8 @@ export default function DashboardPage() {
     const [motorStatus, setMotorStatus] = useState<MotorStatus>("closed");
     const [cabinetOnline, setCabinetOnline] = useState(false);
     const [esp32Connected, setEsp32Connected] = useState(false);
+    const [isLocked, setIsLocked] = useState(true);
+    const [lockLoading, setLockLoading] = useState(false);
     const [booksInCabinet, setBooksInCabinet] = useState<BookInCabinet[]>([]);
     const [loadingMotor, setLoadingMotor] = useState("");
     const [msg, setMsg] = useState({ text: "", type: "" });
@@ -191,6 +193,7 @@ export default function DashboardPage() {
             setIsFull(data.is_full);
             setMotorStatus(data.motor_status as MotorStatus);
             setEsp32Connected(!!data.esp32_connected);
+            setIsLocked(!!data.is_locked);
             setCabinetOnline(true);
         } catch { setCabinetOnline(false); setEsp32Connected(false); }
     }, []);
@@ -433,6 +436,26 @@ export default function DashboardPage() {
         setLoadingMotor("");
     };
 
+    // สลับสถานะกลอนไฟฟ้าล็อกตู้ (คนละตัวกับมอเตอร์แกนชักที่รับหนังสือ)
+    const handleToggleLock = async () => {
+        setLockLoading(true);
+        try {
+            const res = await fetch(`${API}/dashboard/cabinet/lock`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ locked: !isLocked }),
+            });
+            const data = await res.json();
+            if (res.ok) {
+                setIsLocked(!!data.is_locked);
+                notify(data.message);
+            } else {
+                notify(data.error || "เกิดข้อผิดพลาด", "error");
+            }
+        } catch { notify("เกิดข้อผิดพลาด", "error"); }
+        setLockLoading(false);
+    };
+
     const fmtDate = (d: string) =>
         d ? new Date(d).toLocaleString("th-TH", { dateStyle: "short", timeStyle: "short" }) : "-";
 
@@ -536,7 +559,7 @@ export default function DashboardPage() {
                 {/* ปุ่มเปิดตั้งค่าการแจ้งเตือนตอนตู้เต็ม (อีเมล/LINE) กับตั้งค่าตู้ฝั่งแท็บเล็ต — แยกเป็นคนละ
                     การ์ดเพราะเป็นคนละเรื่องกัน (ย้ายรายละเอียดไปอยู่ในหน้าต่างแยกแทนการ์ดแยก 2 ใบเดิม
                     เพราะตอนนี้แต่ละช่องทางแจ้งเตือนรองรับหลายรายการ ใส่รวมในการ์ดเดียวจะรกเกินไป) */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
                     <div className="bg-white rounded-xl shadow p-6 flex items-center justify-between gap-4 flex-wrap">
                         <div>
                             <h2 className="text-lg font-bold text-gray-700 mb-1">🔔 การแจ้งเตือนตอนตู้เต็ม</h2>
@@ -561,6 +584,21 @@ export default function DashboardPage() {
                             className="bg-gray-700 hover:bg-gray-800 text-white font-semibold px-6 py-2 rounded-lg text-sm transition whitespace-nowrap"
                         >
                             🛠️ ตั้งค่าตู้
+                        </button>
+                    </div>
+                    {/* กลอนไฟฟ้าล็อกตู้ — คนละตัวกับมอเตอร์แกนชักที่รับหนังสือ (การ์ด "ควบคุมตู้รับคืน"
+                        ด้านล่าง) ใช้ล็อก/ปลดล็อกฝาตู้ทั้งบาน สั่งแล้วมีผลทันที ไม่ต้องกดบันทึกแยก */}
+                    <div className="bg-white rounded-xl shadow p-6 flex items-center justify-between gap-4 flex-wrap">
+                        <div>
+                            <h2 className="text-lg font-bold text-gray-700 mb-1">{isLocked ? "🔒" : "🔓"} กลอนไฟฟ้าล็อกตู้</h2>
+                            <p className="text-gray-400 text-xs">{isLocked ? "ล็อกอยู่" : "ปลดล็อกอยู่"}</p>
+                        </div>
+                        <button
+                            onClick={handleToggleLock}
+                            disabled={lockLoading}
+                            className={`${isLocked ? "bg-green-600 hover:bg-green-700" : "bg-red-600 hover:bg-red-700"} disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed text-white font-semibold px-6 py-2 rounded-lg text-sm transition whitespace-nowrap`}
+                        >
+                            {lockLoading ? "⏳ กำลังสั่ง..." : isLocked ? "🔓 ปลดล็อก" : "🔒 ล็อก"}
                         </button>
                     </div>
                 </div>

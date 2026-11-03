@@ -9,10 +9,13 @@ type MockHardware struct {
 	FastMode       bool
 	ForceEmpty     bool // เปิดไว้เมื่อยังไม่ได้ต่อเซนเซอร์ Ultrasonic จริง จะไม่รับสถานะ "เต็ม" จากที่ไหนเลย บังคับว่างเสมอ
 	ESP32Connected bool // สถานะ ESP32 (มอเตอร์/RFID) ว่าต่อ MQTT broker อยู่จริงไหม (รู้จาก Last Will/Testament)
+	IsLocked       bool // สถานะกลอนไฟฟ้าล็อกตู้ (คนละตัวกับมอเตอร์แกนชักรับหนังสือ) — true = ล็อกอยู่
 }
 
 func NewMockHardware() *MockHardware {
-	return &MockHardware{MotorStatus: "closed", MotorLogs: []string{}, IsFull: false, FastMode: false, ForceEmpty: false, ESP32Connected: false}
+	// ตั้งค่าเริ่มต้นเป็นล็อกไว้ก่อน (fail-secure) ให้ตรงกับค่าเริ่มต้นตอนบูตของ ESP32 เอง — แค่สมมติฐาน
+	// ตอน backend เพิ่งเริ่มทำงาน ยังไม่รู้สถานะจริงจากบอร์ดจนกว่าจะมีคนสั่งล็อก/ปลดล็อกจากหน้า Dashboard
+	return &MockHardware{MotorStatus: "closed", MotorLogs: []string{}, IsFull: false, FastMode: false, ForceEmpty: false, ESP32Connected: false, IsLocked: true}
 }
 
 var Shared *MockHardware
@@ -103,6 +106,19 @@ func (m *MockHardware) SetESP32Connected(connected bool) {
 	} else {
 		m.addLog("⚠️ ESP32 (มอเตอร์/RFID) หลุดการเชื่อมต่อ")
 	}
+}
+
+func (m *MockHardware) SetLocked(locked bool) string {
+	m.IsLocked = locked
+	if locked {
+		m.addLog("🔐 กลอนไฟฟ้า >> ล็อกตู้")
+	} else {
+		m.addLog("🔓 กลอนไฟฟ้า >> ปลดล็อกตู้")
+	}
+	if locked {
+		return "locked"
+	}
+	return "unlocked"
 }
 
 func (m *MockHardware) SetFastMode(fast bool) {
