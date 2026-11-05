@@ -13,6 +13,9 @@ backend/*.exe
 !.env.example
 .DS_Store
 
+# ไฟล์ dump ฐานข้อมูล (มีข้อมูลจริงของผู้ยืม เช่น รหัสนักศึกษา/เบอร์โทร ไม่ควร commit เข้า git)
+db_backup*.sql
+
 # PlatformIO
 .pio/
 

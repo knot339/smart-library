@@ -1,21 +1,106 @@
 #include <Arduino.h>
 #include <WiFi.h>
+#include <WiFiManager.h>
+#include <Preferences.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
-#include "secrets.h"
 
-// ===== WiFi & MQTT =====
-const int   MQTT_PORT     = 1883;
+// ===== WiFi & MQTT & ตัวตนของตู้ =====
+// ไม่ hardcode WiFi SSID/Password, IP, และ MQTT server อีกต่อไป (เลิกใช้ secrets.h/static IP) — ตั้งค่า
+// ผ่านหน้าเว็บ WiFiManager ตอนเปิดเครื่องครั้งแรกแทนทั้งหมด แล้วจำไว้ใน flash (Preferences/NVS) ถาวร
+// ไม่ต้อง flash ใหม่ทุกครั้งที่ย้ายเครือข่าย/เปลี่ยนตู้ที่ติดตั้ง
+const int MQTT_PORT = 1883;
 
-// ===== Static IP (วง Hotspot มือถือ "P-Hot" 10.239.123.x — เปลี่ยนจาก 172.19.128.x เพราะมือถืออัปเดต
-// แล้วแจก subnet ใหม่ ไม่ใช่เครือข่ายอื่น) =====
-// กัน IP เปลี่ยนไปมาเวลา DHCP แจกใหม่ — ถ้าเปลี่ยนไปใช้ Hotspot/เครือข่ายอื่น ต้องแก้เลขพวกนี้ให้ตรงกับ
-// subnet ใหม่ด้วย (เช็คจาก Default Gateway/Subnet Mask ตอนคอม server ต่อเครือข่ายนั้นๆ)
-IPAddress STATIC_IP(10, 239, 123, 101);
-IPAddress GATEWAY_IP(10, 239, 123, 98); // ยืนยันจาก ipconfig จริงบน hotspot "P-Hot" (subnet เปลี่ยนเองตอนเปิด-ปิด hotspot ใหม่)
-IPAddress SUBNET_MASK(255, 255, 255, 0);
-IPAddress DNS1_IP(10, 239, 123, 98);
-IPAddress DNS2_IP(8, 8, 8, 8);
+Preferences prefs;
+String cabinetID;    // รหัสตู้ที่ผู้ติดตั้งตั้งเองผ่านพอร์ทัล (เช่น "cabinet-1") ใช้แบ่ง MQTT topic ของแต่ละตู้
+String serverHost;   // host ของเครื่อง backend/MQTT broker (แยกจาก port ด้วย ':' ตอนกรอกในพอร์ทัล)
+int    serverPort = MQTT_PORT;
+
+// สร้าง topic string ของตู้นี้ไว้ใช้ซ้ำทั้งไฟล์ (ต้องรอรู้ cabinetID ก่อน จึงประกอบค่าจริงใน setup())
+String TOPIC_CONTROL;
+String TOPIC_RFID;
+String TOPIC_FULL;
+String TOPIC_STATUS;
+
+// ย้ายมาประกาศเป็น global ตรงนี้ (เดิมอยู่ถัดลงไปหลัง bootBlinkTick) เพราะ onParamsSaved() ที่ประกาศ
+// ก่อนหน้าโค้ดส่วนอื่นด้านล่าง ต้องใช้ mqtt ด้วย (สั่ง disconnect ให้ reconnect ใหม่ตอนมีคนแก้ค่าผ่านพอร์ทัล)
+WiFiClient espClient;
+PubSubClient mqtt(espClient);
+
+// ปุ่ม Factory Reset (กดค้างตอนเปิดเครื่อง) — ล้างค่า WiFi/Cabinet ID/Server ที่บันทึกไว้ทั้งหมด แล้ว
+// เปิดพอร์ทัลตั้งค่าใหม่ ใช้ตอนจะย้ายบอร์ดนี้ไปตั้งเป็นตู้อื่น/เครือข่ายอื่น โดยไม่ต้อง flash ใหม่
+// ขาที่ยังว่างอยู่บนบอร์ด — ถ้ายังไม่ได้ต่อปุ่มจริง ขานี้จะลอยที่ HIGH ตามค่า pull-up ภายในเสมอ ไม่กระทบ
+// การทำงานปกติ
+#define FACTORY_RESET_PIN 5
+
+// รหัสผ่าน AP ตั้งค่า "SmartLibrary-Setup" — ต้องยาวอย่างน้อย 8 ตัวอักษร (ข้อกำหนด WPA2) กันคนแปลกหน้า
+// ที่อยู่ในระยะสัญญาณเชื่อมต่อเข้ามาแก้ WiFi/Server ของตู้โดยไม่ได้รับอนุญาต (จากเดิมเปิดเป็น AP สาธารณะ)
+const char* AP_PASSWORD = "libraryPass";
+
+// wm, customCabinetID, customServerAddr เป็น global (ไม่ใช่ local ในฟังก์ชันตั้งค่า) เพราะ WiFiManager
+// เก็บ pointer ไปยัง customCabinetID/customServerAddr ไว้ใช้ตอนวาดหน้าเว็บ ถ้าเป็นตัวแปร local มันจะถูก
+// ทำลายทิ้งทันทีที่ฟังก์ชันตั้งค่า return แต่ wm ยังมีชีวิตต่อเพื่อเปิดพอร์ทัลพื้นหลัง (startWebPortal)
+// ตลอดการทำงาน จะเหลือ pointer ที่ชี้ไปยัง memory ที่ถูกทำลายไปแล้ว (dangling pointer)
+WiFiManager wm;
+WiFiManagerParameter* customCabinetID = nullptr;
+WiFiManagerParameter* customServerAddr = nullptr;
+
+// แยก parse "host:port" ออกมาเป็นฟังก์ชันกลาง ใช้ร่วมกันทั้งตอน setup ครั้งแรก (setupWiFiAndIdentity)
+// และตอนมีคนแก้ผ่านพอร์ทัลพื้นหลังทีหลัง (onParamsSaved) กัน logic ซ้ำกันสองที่แล้วแก้ไม่ครบ
+// ถ้า parse ได้ host ที่ไม่ว่างเปล่า จะอัปเดต serverHost/serverPort (global) แล้วคืน true ถ้าไม่ได้ (เช่น
+// กรอกว่างไว้ หรือกรอกแค่ ":1883" ไม่มี host) จะไม่แก้ serverHost/serverPort เดิมเลย แล้วคืน false —
+// กันบั๊กที่เจอจริง: ของเดิมเช็คแค่ colonIdx > 0 พลาดเคส host ว่าง (colonIdx==0) ทำให้ค่าพังพอกทุกรอบบูต
+bool parseServerAddr(String input) {
+  input.trim();
+  if (input.length() == 0) return false;
+  int colonIdx = input.indexOf(':');
+  String hostPart = (colonIdx >= 0) ? input.substring(0, colonIdx) : input;
+  hostPart.trim();
+  if (hostPart.length() == 0) return false;
+  serverHost = hostPart;
+  if (colonIdx >= 0) {
+    int parsedPort = input.substring(colonIdx + 1).toInt();
+    serverPort = (parsedPort > 0) ? parsedPort : MQTT_PORT;
+  } else {
+    serverPort = MQTT_PORT;
+  }
+  return true;
+}
+
+// เรียกทุกครั้งที่มีคนกดเซฟหน้าตั้งค่า WiFiManager ไม่ว่าจะเป็นตอน setup ครั้งแรก, ตอนบังคับเปิดพอร์ทัล
+// ใหม่ด้วยปุ่ม Factory Reset, หรือเข้าไปแก้ผ่านพอร์ทัลพื้นหลังตอนต่อเน็ตปกติอยู่ก็ตาม
+//
+// ห้าม ESP.restart() ในฟังก์ชันนี้โดยเด็ดขาด — ฟอร์ม WiFi กับฟอร์มรหัสตู้/Server อยู่หน้าเดียวกัน
+// (_paramsInWifi) การเซฟ param (ที่ทำให้ callback นี้ถูกเรียก) เกิดขึ้น "ก่อน" ที่ WiFiManager จะเริ่ม
+// ลองต่อ/บันทึก WiFi ใหม่จริงๆ (ฟังก์ชัน connectWifi() ภายในยังไม่ถูกเรียก ณ จุดนี้) ถ้า restart ไปก่อน
+// ตรงนี้ WiFi ใหม่ที่กรอกจะไม่ถูกบันทึกลง flash เลย บูตรอบหน้าจะย้อนกลับไปต่อ WiFi เดิมเหมือนไม่มีอะไร
+// เปลี่ยน (บั๊กที่เจอจริงจากการทดสอบ: เปลี่ยน WiFi แล้วค่าไม่เปลี่ยน) ต้องปล่อยให้โค้ดกลับไปทำงานต่อตาม
+// ปกติ แล้วแค่ apply รหัสตู้/server ใหม่สดๆตรงนี้แทน ไม่ต้อง restart เครื่องเลย
+void onParamsSaved() {
+  String newCabinetID = String(customCabinetID->getValue());
+  newCabinetID.trim();
+  if (newCabinetID.length() == 0) newCabinetID = "cabinet-1";
+  cabinetID = newCabinetID;
+  prefs.putString("cabinet_id", cabinetID);
+
+  String newServerAddr = String(customServerAddr->getValue());
+  if (parseServerAddr(newServerAddr)) {
+    prefs.putString("server_addr", serverHost + ":" + String(serverPort));
+  } else {
+    Serial.println("[SETUP] ช่อง Server Address ว่างเปล่า/ไม่ถูกต้อง — คงค่า server เดิมไว้ก่อน");
+  }
+
+  TOPIC_CONTROL = "smartlibrary/" + cabinetID + "/control";
+  TOPIC_RFID    = "smartlibrary/" + cabinetID + "/rfid";
+  TOPIC_FULL    = "smartlibrary/" + cabinetID + "/full";
+  TOPIC_STATUS  = "smartlibrary/" + cabinetID + "/status";
+
+  mqtt.setServer(serverHost.c_str(), serverPort);
+  mqtt.disconnect(); // ตัดการเชื่อมต่อเดิม ให้ reconnect() ใน loop() ต่อ MQTT ใหม่ด้วยค่า/topic ล่าสุดเอง
+
+  Serial.printf("[SETUP] บันทึกค่าใหม่แล้ว (ไม่ restart เครื่อง) — รหัสตู้: %s, Server: %s:%d\n",
+                cabinetID.c_str(), serverHost.c_str(), serverPort);
+}
 
 // ===== RFID (Serial2) =====
 #define RXD2 16
@@ -50,6 +135,17 @@ unsigned long firstScanTime = 0;
 bool isCollecting = false;
 unsigned long lastReceiveTime = 0;
 const unsigned long timeoutGap = 25;
+
+// ===== เครื่องสแกนบาร์โค้ด (บัตรนักศึกษา/ตัวตน) — UART1 แยกคนละชุดกับ RFID หนังสือด้านบน (Serial2) =====
+// ขาที่ยังว่างอยู่บนบอร์ดนี้ (ไม่ชนกับ RFID/LED/Ultrasonic/Motor/กลอนไฟฟ้าด้านบน) — ตัวสแกนเนอร์ส่ง
+// ข้อความมาเป็นบรรทัดเดียวจบ (CR/LF ท้ายข้อความ) ไม่ต้องรวบรวมหลายรายการเหมือน RFID หนังสือ
+#define BARCODE_RXD 18
+#define BARCODE_TXD 19
+const unsigned long BARCODE_IDLE_GAP_MS = 50; // ไม่มีไบต์ใหม่เข้ามานานเท่านี้ถือว่าสแกนจบ 1 รอบแล้ว
+
+String barcodeBuffer = "";
+unsigned long barcodeLastByteTime = 0;
+bool barcodeReceiving = false;
 
 // ===== LED =====
 #define LED_PIN 2
@@ -144,9 +240,6 @@ void bootBlinkTick() {
   }
 }
 
-WiFiClient espClient;
-PubSubClient mqtt(espClient);
-
 // ----- ฟังก์ชันตรวจจับตู้เต็มด้วย Ultrasonic (HC-SR04) -----
 // คืนระยะเป็นเซนติเมตร หรือ -1 ถ้าไม่มี echo กลับมา (นอกระยะ/เซนเซอร์มีปัญหา)
 long readUltrasonicDistanceCm() {
@@ -168,7 +261,7 @@ void publishFullStatus(bool full) {
   doc["value"] = full ? "true" : "false";
   char payload[128];
   serializeJson(doc, payload);
-  mqtt.publish("smartlibrary/esp32/full", payload);
+  mqtt.publish(TOPIC_FULL.c_str(), payload);
   Serial.printf("[SENSOR] สถานะตู้เปลี่ยนเป็น: %s\n", full ? "เต็ม" : "ไม่เต็ม");
 }
 
@@ -194,6 +287,37 @@ void checkCabinetFull() {
   } else if (cabinetFull && emptyReadingStreak >= ULTRASONIC_CONFIRM_COUNT) {
     cabinetFull = false;
     publishFullStatus(false);
+  }
+}
+
+// อ่านข้อมูลจากเครื่องสแกนบาร์โค้ด (บัตรนักศึกษา/ตัวตน) แบบไม่บล็อก — ตัวสแกนเนอร์ส่งมาเป็นบรรทัดเดียว
+// จบในชุดเดียว ไม่ต้องรวบรวมหลายรายการแบบ RFID หนังสือ แค่รอจนไม่มีไบต์ใหม่เข้ามานาน BARCODE_IDLE_GAP_MS
+// ก็ถือว่าสแกนจบแล้ว (เทียบเท่า Serial.setTimeout(50) ของโค้ดทดสอบเดิม แต่ไม่บล็อก loop() หลัก)
+// ส่งไป MQTT topic เดียวกับ RFID หนังสือ (smartlibrary/esp32/rfid) เพราะ backend แค่ forward payload
+// ดิบๆ ต่อให้ tablet โดยไม่สนใจชื่อ topic อยู่แล้ว — ฝั่ง tablet แยกแยะจาก field "type" ในตัว payload เอง
+void readBarcodeScanner(unsigned long currentTime) {
+  while (Serial1.available()) {
+    char c = Serial1.read();
+    barcodeBuffer += c;
+    barcodeReceiving = true;
+    barcodeLastByteTime = currentTime;
+  }
+
+  if (barcodeReceiving && (currentTime - barcodeLastByteTime >= BARCODE_IDLE_GAP_MS)) {
+    barcodeBuffer.trim(); // ตัด \r \n ที่สแกนเนอร์ส่งมาท้ายข้อความ
+    if (barcodeBuffer.length() > 0) {
+      StaticJsonDocument<256> doc;
+      doc["type"] = "barcode";
+      doc["value"] = barcodeBuffer;
+
+      char payload[256];
+      serializeJson(doc, payload);
+
+      mqtt.publish(TOPIC_RFID.c_str(), payload);
+      Serial.printf("[BARCODE] Published: %s\n", payload);
+    }
+    barcodeBuffer = "";
+    barcodeReceiving = false;
   }
 }
 
@@ -320,16 +444,16 @@ void callback(char* topic, byte* payload, unsigned int length) {
 // ใช้ Last Will/Testament บอก backend ว่า ESP32 นี้หลุดการเชื่อมต่อ (ไม่ว่าจะปิดเครื่อง/สัญญาณหลุด/ค้าง)
 // broker จะส่ง willMessage นี้ให้ผู้ subscribe topic เดียวกันเองอัตโนมัติทันทีที่ตรวจพบว่า client หลุด
 // (retain=true กันเหตุ backend restart พลาดข้อความไปตอนที่ ESP32 หลุดไปก่อนแล้ว จะอ่านค่าล่าสุดได้ทันทีที่ subscribe ใหม่)
-const char* STATUS_TOPIC = "smartlibrary/esp32/status";
+// (TOPIC_STATUS ประกอบขึ้นจาก cabinetID ใน setup() ก่อนจะมีการเรียก reconnect() ครั้งแรกเสมอ)
 
 void reconnect() {
   Serial.print("[MQTT] Attempting connection...");
   String clientId = "ESP32Client-";
   clientId += String(random(0xffff), HEX);
-  if (mqtt.connect(clientId.c_str(), STATUS_TOPIC, 0, true, "offline")) {
+  if (mqtt.connect(clientId.c_str(), TOPIC_STATUS.c_str(), 0, true, "offline")) {
     Serial.println(" connected");
-    mqtt.subscribe("smartlibrary/esp32/control");
-    mqtt.publish(STATUS_TOPIC, "online", true); // บอก backend ว่าออนไลน์แล้ว (retain ไว้เหมือนกัน)
+    mqtt.subscribe(TOPIC_CONTROL.c_str());
+    mqtt.publish(TOPIC_STATUS.c_str(), "online", true); // บอก backend ว่าออนไลน์แล้ว (retain ไว้เหมือนกัน)
     publishFullStatus(cabinetFull); // ส่งสถานะตู้ปัจจุบันซ้ำ เผื่อ backend หลุด MQTT ไปช่วงที่ผ่านมา
     bootLedBlinking = false; // ต่อ server สำเร็จครั้งแรกแล้ว หยุดกะพริบไฟบอกสถานะ boot ถาวร
     digitalWrite(LED_PIN, HIGH);
@@ -342,9 +466,93 @@ void reconnect() {
   }
 }
 
+// ตั้งค่า WiFi + รหัสตู้ + Server ผ่าน WiFiManager — เรียกได้ทั้งตอนบูต (setup) และระหว่างเครื่องทำงาน
+// ปกติ (loop, ตอนกดปุ่ม Factory Reset ค้าง 3 วิ) จึงแยกเป็นฟังก์ชันแทนการเขียนอยู่ใน setup() อย่างเดียว
+// forcePortal = true  -> เปิดพอร์ทัล "SmartLibrary-Setup" ทันที (startConfigPortal) ไม่ว่าจะมีค่าที่
+//                        บันทึกไว้อยู่แล้วหรือไม่ ใช้ตอนผู้ใช้ตั้งใจจะตั้งค่าใหม่
+// forcePortal = false -> ลองต่อด้วยค่าที่บันทึกไว้ก่อน (autoConnect) เปิดพอร์ทัลเองอัตโนมัติถ้าต่อไม่ได้
+//                        ใช้ตอนบูตปกติ
+void setupWiFiAndIdentity(bool forcePortal) {
+  // สร้าง parameter + ลงทะเบียน callback แค่ครั้งเดียวตลอดการทำงานของโปรแกรม — wm เป็น global ที่ค้างอยู่
+  // ตลอด (เพื่อเปิดพอร์ทัลพื้นหลังด้วย startWebPortal ด้านล่าง) ถ้าเรียก addParameter ซ้ำทุกครั้งที่ฟังก์ชัน
+  // นี้ถูกเรียก (เช่น ตอนกดปุ่มขอพอร์ทัลใหม่ระหว่างทำงาน) จะกลายเป็นช่องกรอกซ้ำพอกเพิ่มขึ้นเรื่อยๆบนหน้าเว็บ
+  if (customCabinetID == nullptr) {
+    String savedCabinetID = prefs.getString("cabinet_id", "");
+    String savedServerAddr = prefs.getString("server_addr", "");
+
+    customCabinetID = new WiFiManagerParameter("cabinet_id", "รหัสตู้ (เช่น cabinet-1)", savedCabinetID.c_str(), 40);
+    customServerAddr = new WiFiManagerParameter("server_addr", "Server Address (host:port เช่น 192.168.1.10:1883)", savedServerAddr.c_str(), 60);
+    wm.addParameter(customCabinetID);
+    wm.addParameter(customServerAddr);
+    wm.setSaveParamsCallback(onParamsSaved);
+    wm.setConfigPortalTimeout(180);
+  }
+
+  bool wifiConnected;
+  if (forcePortal) {
+    Serial.println("[SETUP] เปิดพอร์ทัลตั้งค่า \"SmartLibrary-Setup\" ทันที...");
+    wifiConnected = wm.startConfigPortal("SmartLibrary-Setup", AP_PASSWORD);
+  } else {
+    wifiConnected = wm.autoConnect("SmartLibrary-Setup", AP_PASSWORD);
+  }
+
+  if (!wifiConnected) {
+    Serial.println("[WiFi] ต่อไม่สำเร็จ/timeout — รีสตาร์ทบอร์ดเพื่อลองใหม่");
+    delay(3000);
+    ESP.restart();
+  }
+
+  cabinetID = String(customCabinetID->getValue());
+  cabinetID.trim();
+  if (cabinetID.length() == 0) cabinetID = "cabinet-1"; // กันกรณีฟอร์มถูกส่งมาว่าง
+
+  if (!parseServerAddr(String(customServerAddr->getValue()))) {
+    Serial.println("[SETUP] ช่อง Server Address ว่างเปล่า/ไม่ถูกต้อง — คงค่า server เดิมไว้ก่อน");
+  }
+
+  // บันทึกค่าลง flash ถาวร เผื่อบูตครั้งหน้า WiFiManager ต่อด้วย WiFi เดิมได้เลยโดยไม่เปิดพอร์ทัลอีก
+  prefs.putString("cabinet_id", cabinetID);
+  prefs.putString("server_addr", serverHost + ":" + String(serverPort));
+
+  // ประกอบ MQTT topic ของตู้นี้ไว้ใช้ซ้ำตลอดทั้งไฟล์ (smartlibrary/<cabinet_id>/...)
+  TOPIC_CONTROL = "smartlibrary/" + cabinetID + "/control";
+  TOPIC_RFID    = "smartlibrary/" + cabinetID + "/rfid";
+  TOPIC_FULL    = "smartlibrary/" + cabinetID + "/full";
+  TOPIC_STATUS  = "smartlibrary/" + cabinetID + "/status";
+
+  Serial.printf("[OK] WiFi Connected! IP: %s\n", WiFi.localIP().toString().c_str());
+  Serial.printf("[SETUP] Cabinet ID: %s\n", cabinetID.c_str());
+  Serial.printf("[SETUP] Server: %s:%d\n", serverHost.c_str(), serverPort);
+
+  // จำกัดเวลารอตอน connect TCP ไปยัง MQTT broker ไม่ให้เกิน 3 วิ (ของเดิมไม่ได้ตั้งไว้ ใช้ค่า default ของ
+  // WiFiClient ซึ่งอาจรอนานหลายวินาทีถ้า broker เข้าไม่ถึง/ไม่ตอบ) เพราะ mqtt.connect() ที่เรียกใน
+  // reconnect() ทุก 5 วิ เป็นการบล็อก loop() ทั้งลูป ถ้ารอนานเกินไปจะไปบล็อก wm.process() ที่ต้องเรียก
+  // ทุกรอบ loop() ด้วย ทำให้พอร์ทัลพื้นหลัง (startWebPortal) แทบไม่ตอบหน้าเว็บเลยช่วงที่ MQTT ต่อไม่ติด
+  // (บั๊กที่เจอ: WiFiClient::setTimeout() ของ ESP32 core รับค่าเป็น "วินาที" ไม่ใช่ "มิลลิวินาที" แบบ
+  // Stream::setTimeout() ทั่วไป ของเดิมที่เขียน setTimeout(3000) จึงกลายเป็นตั้งไว้ 3000 วินาที (~50 นาที)
+  // ไม่ได้ช่วยลด block เลย ต้องใส่ "3" ไม่ใช่ "3000")
+  espClient.setTimeout(3);
+  mqtt.setServer(serverHost.c_str(), serverPort);
+
+  // เปิด AP "SmartLibrary-Setup" ควบคู่กับ WiFi หลักไว้ตลอดเวลา (AP+STA) ไม่ใช่แค่ตอนเปิดเครื่องครั้งแรก
+  // หรือตอนกดปุ่มขอพอร์ทัลใหม่เท่านั้น — ของเดิม WiFiManager จะปิด AP ทิ้งทันทีที่ต่อ WiFi หลักสำเร็จ ทำให้
+  // หา SSID "SmartLibrary-Setup" ในรายการ WiFi ไม่เจอเลยตอนเครื่องทำงานปกติ ต้องกดปุ่มก่อนถึงจะโผล่มา —
+  // ตอนนี้เปิดค้างไว้เสมอ ต่อเข้า AP นี้ได้ทันทีไม่ต้องกดปุ่มรอก่อน (ESP32 รองรับ AP+STA พร้อมกันได้)
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.softAP("SmartLibrary-Setup", AP_PASSWORD);
+  Serial.printf("[SETUP] เปิด AP \"SmartLibrary-Setup\" ควบคู่ไว้ตลอด (IP: %s)\n", WiFi.softAPIP().toString().c_str());
+
+  // เปิดพอร์ทัลตั้งค่าค้างไว้ที่ IP ปัจจุบันของบอร์ดบนเครือข่ายปกติด้วย (ไม่ใช่แค่ตอนเปิด AP) ต่อเน็ตอยู่
+  // แล้วก็เข้าไปแก้รหัสตู้/Server/WiFi ได้ทุกเมื่อผ่าน http://<ip ของบอร์ด>/ หรือต่อเข้า AP ด้านบนแล้วเข้า
+  // http://192.168.4.1/ ก็ได้เหมือนกัน — ไม่ต้องกดปุ่ม/รอเปิด AP ใหม่อีกแล้ว
+  // (ต้องมี wm.process() เรียกใน loop() ด้วยไม่งั้นพอร์ทัลนี้จะไม่ตอบหน้าเว็บ)
+  wm.startWebPortal();
+}
+
 void setup() {
   Serial.begin(115200);
   Serial2.begin(57600, SERIAL_8N1, RXD2, TXD2);
+  Serial1.begin(9600, SERIAL_8N1, BARCODE_RXD, BARCODE_TXD);
 
   Serial.printf("MAC Address: %s\n", WiFi.macAddress().c_str());
 
@@ -382,35 +590,22 @@ void setup() {
   currentPos = 2; // Close (ยืดสุด)
   Serial.println("[MOTOR] Calibration done, at CLOSE");
 
-  WiFi.mode(WIFI_STA);
+  // ===== ตั้งค่า WiFi + รหัสตู้ + Server ผ่าน WiFiManager (แทน secrets.h/static IP เดิมทั้งหมด) =====
+  pinMode(FACTORY_RESET_PIN, INPUT_PULLUP);
+  prefs.begin("smartlib", false);
 
-  // ตั้ง static IP ก่อน begin() เสมอ กัน DHCP แจก IP ใหม่ไปมา (ต้องตรงกับ subnet ของเครือข่ายที่ใช้จริง)
-  if (!WiFi.config(STATIC_IP, GATEWAY_IP, SUBNET_MASK, DNS1_IP, DNS2_IP)) {
-    Serial.println("[WiFi] ตั้ง static IP ไม่สำเร็จ");
+  // กดปุ่ม Factory Reset ค้างไว้ตอนเปิดเครื่อง (ขาโดนดึงลง LOW) เพื่อล้างค่า WiFi/รหัสตู้/Server ที่
+  // เคยบันทึกไว้ทั้งหมด แล้วเปิดพอร์ทัลตั้งค่าใหม่ — ใช้ตอนจะย้ายบอร์ดนี้ไปเป็นตู้อื่น/เครือข่ายอื่น
+  bool bootForcePortal = (digitalRead(FACTORY_RESET_PIN) == LOW);
+  if (bootForcePortal) {
+    Serial.println("[SETUP] Factory Reset ถูกกด — ล้างค่าเดิมทั้งหมด");
+    prefs.clear();
   }
 
-  Serial.printf("WiFi SSID: %s ", WIFI_SSID);
-  Serial.printf("Connecting to Router: %s", WIFI_SSID);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  unsigned long connectStart = millis();
-  unsigned long lastDot = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - connectStart < 10000) {
-    bootBlinkTick();
-    if (millis() - lastDot >= 500) {
-      lastDot = millis();
-      Serial.print(".");
-    }
-    delay(10);
-  }
-  Serial.println();
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.printf("[OK] Internet Connected! IP: %s\n", WiFi.localIP().toString().c_str());
-  } else {
-    Serial.println("[WARN] Internet NOT connected (จะลองเชื่อมต่อใหม่เรื่อยๆ ระหว่างทำงาน)");
-  }
-
-  Serial.printf("MQTT Server: %s:%d\n", MQTT_SERVER, MQTT_PORT);
-  mqtt.setServer(MQTT_SERVER, MQTT_PORT);
+  // ถ้ามีค่าที่บันทึกไว้แล้ว (เช่น เคยตั้งค่าตอน dev/เคยเทสมาก่อน) autoConnect() จะต่อ WiFi เดิมไปเลย
+  // โดยไม่เปิดพอร์ทัลให้เห็นอีก — ถ้าต้องการบังคับเปิดพอร์ทัลใหม่โดยไม่ต้องรีสตาร์ทบอร์ด ให้กดปุ่มนี้ค้าง
+  // ไว้ 3 วินาทีตอนเครื่องทำงานปกติ (เช็คใน loop() ด้านล่าง) ก็เปิดพอร์ทัลได้ทันทีเหมือนกัน
+  setupWiFiAndIdentity(bootForcePortal);
   mqtt.setCallback(callback);
   // ลด keepalive จาก default 15 วินาทีเหลือ 5 วินาที — สงสัยว่า NAT ของ hotspot มือถือ timeout
   // connection ที่ "เงียบ" เร็วกว่า 15 วินาที ทำให้หลุดก่อนที่จะได้ส่ง ping รอบถัดไป ลองส่งถี่ขึ้นดูก่อน
@@ -424,10 +619,35 @@ void loop() {
 
   bootBlinkTick(); // กะพริบไฟต่อเนื่องจนกว่าจะต่อ MQTT server สำเร็จครั้งแรก (ไม่บล็อก)
 
+  // ให้พอร์ทัลพื้นหลัง (startWebPortal ใน setupWiFiAndIdentity) ตอบหน้าเว็บได้ตลอด — ถ้าไม่ได้เปิดอยู่
+  // (เช่น ระหว่างที่กำลังบังคับพอร์ทัลแบบ AP ด้านล่างอยู่) ฟังก์ชันนี้จะเช็คแล้วไม่ทำอะไรเลย ไม่เสียเวลา
+  wm.process();
+
+  // --- กดปุ่ม Factory Reset ค้าง 3 วินาทีตอนเครื่องทำงานปกติ: เปิดพอร์ทัล "SmartLibrary-Setup" (AP) ได้
+  //     ทันทีโดยไม่ต้องรีสตาร์ทบอร์ด พร้อมค่าปัจจุบันเติมไว้ให้แก้ต่อได้เลย (ไม่ล้างค่าเดิมทิ้งแบบปุ่มตอน
+  //     บูต เพราะจุดนี้คือ "เข้าไปแก้" ไม่ใช่ "รีเซ็ตเพื่อย้ายตู้") ---
+  static unsigned long resetHoldStart = 0;
+  if (digitalRead(FACTORY_RESET_PIN) == LOW) {
+    if (resetHoldStart == 0) {
+      resetHoldStart = currentTime;
+    } else if (currentTime - resetHoldStart >= 3000) {
+      Serial.println("[SETUP] กดปุ่ม Factory Reset ค้าง 3 วิระหว่างทำงาน — เปิดพอร์ทัลตั้งค่าใหม่ทันที");
+      resetHoldStart = 0;
+      wm.stopWebPortal();                        // ปิดพอร์ทัลพื้นหลังก่อน กันชนกับพอร์ทัลแบบ AP ด้านล่าง
+      wm.startConfigPortal("SmartLibrary-Setup", AP_PASSWORD); // บล็อกจนกว่าจะเซฟ/timeout 180 วิ
+      // ถ้ากดเซฟในพอร์ทัลนี้ onParamsSaved() จะ restart เครื่องไปจากข้างในเลย (ไม่มีทางรันถึงบรรทัดถัดไป)
+      // ถ้าแค่ timeout เฉยๆไม่ได้เซฟอะไร ให้เปิดพอร์ทัลพื้นหลังกลับมาแล้วทำงานต่อตามปกติ
+      wm.startWebPortal();
+      return; // ข้ามรอบ loop() นี้ไปเลย
+    }
+  } else {
+    resetHoldStart = 0;
+  }
+
   if (WiFi.status() != WL_CONNECTED) {
     if (currentTime - lastWifiRetryTime > 30000 || lastWifiRetryTime == 0) {
       lastWifiRetryTime = currentTime;
-      Serial.printf("[WiFi] Reconnecting... SSID: %s\n", WIFI_SSID);
+      Serial.printf("[WiFi] Reconnecting... SSID: %s\n", WiFi.SSID().c_str());
       WiFi.reconnect();
     }
   } else if (!mqtt.connected()) {
@@ -456,6 +676,9 @@ void loop() {
     lastUltrasonicCheck = currentTime;
     checkCabinetFull();
   }
+
+  // --- 0.7 อ่านเครื่องสแกนบาร์โค้ด (บัตรนักศึกษา/ตัวตน) แบบไม่บล็อก ---
+  readBarcodeScanner(currentTime);
 
   // --- 1. อ่านข้อมูลดิบจาก RFID reader ทีละไบต์ ประกอบเป็น frame ตามโครงสร้างที่รู้แน่นอนแล้ว
   //     (sync ด้วย Head=0x13, ความยาว frame คงที่ตาม RFID_FRAME_LEN) แทนการกรองเอาตัวพิมพ์ได้มา
@@ -522,7 +745,7 @@ void loop() {
       char payload[512];
       serializeJson(doc, payload);
 
-      mqtt.publish("smartlibrary/esp32/rfid", payload);
+      mqtt.publish(TOPIC_RFID.c_str(), payload);
       Serial.printf("[RFID] Published: %s\n", payload);
     }
     isCollecting = false;

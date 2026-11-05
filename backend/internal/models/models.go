@@ -45,6 +45,27 @@ type LineChannel struct {
 	Targets string `gorm:"size:1000" json:"targets"`
 }
 
+// โครงสร้างข้อมูลสำหรับตู้แต่ละใบ (รองรับระบบแบบหลายตู้) — CabinetID เป็นรหัสที่ผู้ดูแลตั้งเองผ่านหน้า
+// WiFiManager ตอน setup บอร์ด ESP32 มอเตอร์ครั้งแรก (เช่น "cabinet-1") ใช้เป็นตัวแบ่ง MQTT topic/สถานะ
+// ของแต่ละตู้ไม่ให้ปนกัน
+type Cabinet struct {
+	ID         uint       `gorm:"primaryKey" json:"id"`
+	CabinetID  string     `gorm:"uniqueIndex;size:50" json:"cabinet_id"`
+	Name       string     `gorm:"size:100" json:"name"`
+	Active     bool       `gorm:"default:true" json:"active"`
+	LastSeenAt *time.Time `json:"last_seen_at"`
+}
+
+// โครงสร้างข้อมูลสำหรับกล้องแต่ละตัวของแต่ละตู้ — กล้องลงทะเบียนตัวเองกับ backend ผ่าน HTTP (ไม่ใช้ MQTT)
+// ตอนบูตและเป็นระยะ ส่ง cabinet_id/role/ip ของตัวเองมาอัปเดตแถวนี้ แทนการ hardcode IP ไว้ที่ frontend
+type CabinetCamera struct {
+	ID         uint      `gorm:"primaryKey" json:"id"`
+	CabinetID  string    `gorm:"size:50;index" json:"cabinet_id"`
+	Role       string    `gorm:"size:20" json:"role"` // "front" หรือ "inside"
+	IP         string    `gorm:"size:45" json:"ip"`
+	LastSeenAt time.Time `json:"last_seen_at"`
+}
+
 // โครงสร้างข้อมูลสำหรับตารางบันทึกการยืม-คืน (BorrowRecord)
 type BorrowRecord struct {
 	ID              uint       `gorm:"primaryKey" json:"id"`

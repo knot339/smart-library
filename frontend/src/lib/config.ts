@@ -7,12 +7,7 @@ const browserHost = typeof window !== "undefined" ? window.location.hostname : "
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || `http://${browserHost}:8080/api`;
 export const WS_BASE_URL = process.env.NEXT_PUBLIC_WS_BASE_URL || `ws://${browserHost}:8080/ws/tablet`;
 
-// ip ของกล้อง
-export const CAMERA_FRONT_URL = process.env.NEXT_PUBLIC_CAMERA_FRONT_URL || ""; // กล้องหน้าตู้
-export const CAMERA_INSIDE_URL = process.env.NEXT_PUBLIC_CAMERA_INSIDE_URL || ""; // กล้องในตู้
-
-export const CAMERA_FRONT_RECORDINGS_URL = process.env.NEXT_PUBLIC_CAMERA_FRONT_RECORDINGS_URL || "";
-export const CAMERA_INSIDE_RECORDINGS_URL = process.env.NEXT_PUBLIC_CAMERA_INSIDE_RECORDINGS_URL || "";
-
-export const CAMERA_FRONT_FILE_URL = process.env.NEXT_PUBLIC_CAMERA_FRONT_FILE_URL || "";
-export const CAMERA_INSIDE_FILE_URL = process.env.NEXT_PUBLIC_CAMERA_INSIDE_FILE_URL || "";
+// NEXT_PUBLIC_CAMERA_*_URL ไม่ใช้แล้ว (Phase 4) — Dashboard ตอนนี้ดึง IP กล้องมาจาก backend เอง
+// (GET /api/cabinets/:id -> cameras: [{role, ip}], มาจากที่กล้องแต่ละตัว self-register ไว้) แล้วสร้าง
+// URL สตรีม/ประวัติวิดีโอขึ้นมาเองฝั่ง client เลย ไม่ต้อง hardcode ผ่าน .env + build ใหม่ทุกครั้งที่กล้อง
+// เปลี่ยน IP อีกต่อไป ดู frontend/src/app/dashboard/[cabinetId]/page.tsx (cameraBaseUrl)

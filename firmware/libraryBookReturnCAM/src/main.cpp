@@ -1,5 +1,8 @@
 #include "esp_camera.h"
 #include <WiFi.h>
+#include <WiFiManager.h>
+#include <Preferences.h>
+#include <HTTPClient.h>
 #include "esp_timer.h"
 #include "img_converters.h"
 #include "Arduino.h"
@@ -11,17 +14,130 @@
 #include "FS.h"
 #include <time.h>
 #include <vector>
-#include "secrets.h"
 
-// ===== Static IP =====
-// กัน IP เปลี่ยนไปมาเวลา DHCP แจกใหม่ — ตัว IP ของบอร์ดนี้ (CAMERA_STATIC_IP) อยู่ใน secrets.h แทน
-// เพราะโค้ดไฟล์นี้ใช้ร่วมกันทั้งกล้องหน้าตู้และกล้องในตู้ (คนละบอร์ด แต่ build จากโค้ดเดียวกัน)
-// ส่วน Gateway/Subnet/DNS เป็นของเครือข่ายเดียวกันทั้งระบบ เลยเป็นค่าคงที่ใช้ร่วมได้ที่นี่
-// *** เปลี่ยนเครือข่าย ต้องแก้ทั้ง GATEWAY_IP/DNS1_IP ที่นี่ และ CAMERA_STATIC_IP ใน secrets.h ของทุกบอร์ด ***
-IPAddress GATEWAY_IP(10, 239, 123, 98); // ยืนยันจาก ipconfig จริงบน hotspot "P-Hot" (subnet เปลี่ยนเองตอนเปิด-ปิด hotspot ใหม่)
-IPAddress SUBNET_MASK(255, 255, 255, 0);
-IPAddress DNS1_IP(10, 239, 123, 98);
-IPAddress DNS2_IP(8, 8, 8, 8);
+// ===== WiFi & ตัวตนของกล้องตัวนี้ =====
+// ไม่ hardcode WiFi SSID/Password/Static IP อีกต่อไป (เลิกใช้ secrets.h) — ตั้งค่าผ่านหน้าเว็บ
+// WiFiManager ตอนเปิดเครื่องครั้งแรกแทนทั้งหมด แล้วจำไว้ใน flash (Preferences/NVS) ถาวร ไม่ต้อง flash
+// ใหม่ทุกครั้งที่ย้ายเครือข่าย/เปลี่ยนตู้ที่ติดตั้ง/สลับว่าเป็นกล้องหน้าตู้หรือในตู้ — โค้ด main.cpp ไฟล์
+// เดียวกันนี้ยังใช้ flash ทั้งกล้องหน้าตู้และกล้องในตู้ได้เหมือนเดิม แค่ตั้งค่า Role ต่างกันตอนกรอกฟอร์ม
+const int BACKEND_PORT = 8080;
+
+Preferences prefs;
+String cabinetID;     // รหัสตู้ (เช่น "cabinet-1") ใช้บอก backend ว่ากล้องตัวนี้อยู่ตู้ไหน
+String cameraRole;    // "front" (กล้องหน้าตู้) หรือ "inside" (กล้องในตู้)
+String serverHost;    // host ของเครื่อง backend (แยกจาก port ด้วย ':' ตอนกรอกในพอร์ทัล)
+int    serverPort = BACKEND_PORT;
+
+// รหัสผ่าน AP ตั้งค่า — เหมือนกับที่ใช้ในบอร์ดมอเตอร์ (ดู
+// firmware/libraryBookReturnESP32/src/main.cpp) ต้องยาวอย่างน้อย 8 ตัวอักษร (ข้อกำหนด WPA2) กันคน
+// แปลกหน้าที่อยู่ในระยะสัญญาณเชื่อมต่อเข้ามาแก้ WiFi/Server ของกล้องโดยไม่ได้รับอนุญาต
+const char* AP_PASSWORD = "libraryPass";
+
+// ชื่อ AP ตั้งค่าของกล้องตั้งใจให้ต่างกันตาม Role (ไม่ใช้ "SmartLibrary-Setup" กลางๆแบบบอร์ดมอเตอร์)
+// เพราะมีกล้อง 2 ตัวต่อตู้ ถ้าใช้ชื่อเดียวกันหมดจะแยกไม่ออกว่ากำลังต่อเข้าไปตั้งค่าตัวไหนอยู่ — ตอนยังไม่
+// เคยตั้ง Role เลย (บูตครั้งแรกสุด) จะ fallback เป็นชื่อกลางนี้ไปก่อน จนกว่าจะกรอก Role ผ่านฟอร์มครั้งแรก
+const char* AP_NAME_DEFAULT = "SmartLibraryCam-Setup";
+
+String apNameForRole(const String &role) {
+  if (role == "front") return "LibraryCamFront";
+  if (role == "inside") return "LibraryCamInside";
+  return AP_NAME_DEFAULT;
+}
+
+// wm/customCabinetID/customRole/customServerAddr เป็น global (ไม่ใช่ local ในฟังก์ชันตั้งค่า) เพราะ
+// WiFiManager เก็บ pointer ไปยัง parameter เหล่านี้ไว้ใช้ตอนวาดหน้าเว็บ ถ้าเป็นตัวแปร local มันจะถูก
+// ทำลายทิ้งทันทีที่ฟังก์ชันตั้งค่า return แต่ wm ยังมีชีวิตต่อเพื่อเปิดพอร์ทัลพื้นหลัง (startWebPortal)
+// ตลอดการทำงาน จะเหลือ pointer ที่ชี้ไปยัง memory ที่ถูกทำลายไปแล้ว (dangling pointer) — บทเรียนจาก
+// บอร์ดมอเตอร์ที่เจอบั๊กนี้มาก่อน
+WiFiManager wm;
+WiFiManagerParameter* customCabinetID = nullptr;
+WiFiManagerParameter* customRole = nullptr;
+WiFiManagerParameter* customServerAddr = nullptr;
+
+// แยก parse "host:port" ออกมาเป็นฟังก์ชันกลาง (เหมือนบอร์ดมอเตอร์) ถ้า parse ได้ host ที่ไม่ว่างเปล่า
+// จะอัปเดต serverHost/serverPort (global) แล้วคืน true ถ้าไม่ได้ (เช่นกรอกว่างไว้ หรือกรอกแค่ ":8080"
+// ไม่มี host) จะไม่แก้ serverHost/serverPort เดิมเลย แล้วคืน false — กันบั๊กที่เคยเจอในบอร์ดมอเตอร์: เช็ค
+// แค่ colonIdx > 0 พลาดเคส host ว่าง (colonIdx==0) ทำให้ค่าพังพอกทุกรอบบูต (":8080:8080:8080:...")
+bool parseServerAddr(String input) {
+  input.trim();
+  if (input.length() == 0) return false;
+  int colonIdx = input.indexOf(':');
+  String hostPart = (colonIdx >= 0) ? input.substring(0, colonIdx) : input;
+  hostPart.trim();
+  if (hostPart.length() == 0) return false;
+  serverHost = hostPart;
+  if (colonIdx >= 0) {
+    int parsedPort = input.substring(colonIdx + 1).toInt();
+    serverPort = (parsedPort > 0) ? parsedPort : BACKEND_PORT;
+  } else {
+    serverPort = BACKEND_PORT;
+  }
+  return true;
+}
+
+// ส่งลงทะเบียนตัวตนกล้องนี้ไปที่ backend ({cabinet_id, role, ip}) — เรียกครั้งแรกหลังต่อ WiFi สำเร็จ
+// แล้วเรียกซ้ำทุก 60 วิใน loop() เผื่อ IP เปลี่ยน (DHCP) หรือ backend เพิ่ง restart แล้วลืมค่าเดิมไป
+void registerCamera() {
+  if (WiFi.status() != WL_CONNECTED || serverHost.length() == 0) return;
+
+  HTTPClient http;
+  String url = "http://" + serverHost + ":" + String(serverPort) + "/api/cabinets/register-camera";
+  http.setConnectTimeout(3000);
+  http.setTimeout(5000);
+  http.begin(url);
+  http.addHeader("Content-Type", "application/json");
+
+  String payload = "{\"cabinet_id\":\"" + cabinetID + "\",\"role\":\"" + cameraRole +
+                    "\",\"ip\":\"" + WiFi.localIP().toString() + "\"}";
+  int code = http.POST(payload);
+  if (code > 0) {
+    Serial.printf("[REGISTER] POST %s -> %d\n", url.c_str(), code);
+  } else {
+    Serial.printf("[REGISTER] POST %s failed: %s\n", url.c_str(), http.errorToString(code).c_str());
+  }
+  http.end();
+}
+
+// เรียกทุกครั้งที่มีคนกดเซฟหน้าตั้งค่า WiFiManager (ตอน setup ครั้งแรก หรือเข้าไปแก้ผ่านพอร์ทัลพื้นหลัง
+// ตอนต่อเน็ตปกติอยู่ก็ตาม)
+//
+// ห้าม ESP.restart() ในฟังก์ชันนี้ — บทเรียนจากบอร์ดมอเตอร์: ฟอร์ม WiFi กับฟอร์มรหัสตู้/Role/Server อยู่
+// หน้าเดียวกัน (_paramsInWifi) การเซฟ param (ที่ทำให้ callback นี้ถูกเรียก) เกิดขึ้น "ก่อน" ที่ WiFiManager
+// จะเริ่มลองต่อ/บันทึก WiFi ใหม่จริงๆ ถ้า restart ไปก่อนตรงนี้ WiFi ใหม่ที่กรอกจะไม่ถูกบันทึกลง flash เลย
+// ต้องปล่อยให้โค้ดกลับไปทำงานต่อตามปกติ แล้วแค่ apply รหัสตู้/role/server ใหม่สดๆตรงนี้แทน
+void onParamsSaved() {
+  String newCabinetID = String(customCabinetID->getValue());
+  newCabinetID.trim();
+  if (newCabinetID.length() == 0) newCabinetID = "cabinet-1";
+  cabinetID = newCabinetID;
+  prefs.putString("cabinet_id", cabinetID);
+
+  String newRole = String(customRole->getValue());
+  newRole.trim();
+  if (newRole.length() == 0) newRole = "front";
+  bool roleChanged = (newRole != cameraRole);
+  cameraRole = newRole;
+  prefs.putString("role", cameraRole);
+
+  String newServerAddr = String(customServerAddr->getValue());
+  if (parseServerAddr(newServerAddr)) {
+    prefs.putString("server_addr", serverHost + ":" + String(serverPort));
+  } else {
+    Serial.println("[SETUP] ช่อง Server Address ว่างเปล่า/ไม่ถูกต้อง — คงค่า server เดิมไว้ก่อน");
+  }
+
+  // ถ้า Role เปลี่ยน ชื่อ AP ตั้งค่าควรเปลี่ยนตามทันที (LibraryCamFront/LibraryCamInside) ไม่ต้องรอรีบูต —
+  // เปลี่ยนชื่อ AP สดๆตรงนี้ได้เลยเพราะแค่เรียก WiFi.softAP() ซ้ำด้วยชื่อใหม่ ไม่ต้อง restart เครื่อง
+  if (roleChanged) {
+    String newApName = apNameForRole(cameraRole);
+    WiFi.softAP(newApName.c_str(), AP_PASSWORD);
+    Serial.printf("[SETUP] เปลี่ยนชื่อ AP ตามสด Role ใหม่: %s\n", newApName.c_str());
+  }
+
+  Serial.printf("[SETUP] บันทึกค่าใหม่แล้ว (ไม่ restart เครื่อง) — รหัสตู้: %s, Role: %s, Server: %s:%d\n",
+                cabinetID.c_str(), cameraRole.c_str(), serverHost.c_str(), serverPort);
+  registerCamera(); // ลงทะเบียนใหม่ทันทีด้วยค่าล่าสุด ไม่ต้องรอ 60 วิ
+}
 
 #define PART_BOUNDARY "123456789000000000000987654321"
 static const char* _STREAM_CONTENT_TYPE = "multipart/x-mixed-replace;boundary=" PART_BOUNDARY;
@@ -750,50 +866,88 @@ void startRecordingsServer() {
 // การโหลดไฟล์วิดีโอเป็น request ที่ใช้เวลานาน/ค้างได้ง่าย (ไฟล์ใหญ่ หรือเบราว์เซอร์บางตัว
 // พยายาม preview ไฟล์ AVI ที่เล่นไม่ได้แล้วค้าง connection ไว้) ถ้าแชร์ instance กับ
 // /recordings จะไปบล็อก list เหมือนที่สตรีมสดเคยบล็อกมาก่อน จึงต้องแยกพอร์ตเด็ดขาด
-// สแกนหา WIFI_SSID ซ้ำ ๆ ก่อนเชื่อมต่อ เผื่อ AP ยังไม่ขึ้น/ติดต่อไม่ได้ตอนบูต
-// จะวนสแกน + ลองเชื่อมต่อไปเรื่อย ๆ จนกว่าจะสำเร็จ
-void connectWiFi() {
-  WiFi.mode(WIFI_STA);
+// ตั้งค่า WiFi + รหัสตู้ + Role + Server ผ่าน WiFiManager (แทน secrets.h/static IP เดิมทั้งหมด) — ดู
+// คอมเมนต์เรื่องบั๊ก/บทเรียนต่างๆ ที่ onParamsSaved() ด้านบน (restart ก่อนเวลา, setTimeout วินาทีไม่ใช่
+// มิลลิวินาที, AP ไม่มีรหัสผ่าน) เพราะแก้ตามแบบเดียวกับที่เจอจริงมาแล้วในบอร์ดมอเตอร์
+void setupWiFiAndIdentity() {
+  prefs.begin("smartlibcam", false);
 
-  // ตั้ง static IP ก่อน begin() เสมอ กัน DHCP แจก IP ใหม่ไปมา (ต้องตรงกับ subnet ของเครือข่ายที่ใช้จริง)
-  // CAMERA_STATIC_IP มาจาก secrets.h ของบอร์ดนี้โดยเฉพาะ (กล้องหน้าตู้/ในตู้ ต้องตั้งคนละค่ากัน)
-  if (!WiFi.config(CAMERA_STATIC_IP, GATEWAY_IP, SUBNET_MASK, DNS1_IP, DNS2_IP)) {
-    Serial.println("[WiFi] ตั้ง static IP ไม่สำเร็จ");
+  String savedCabinetID = prefs.getString("cabinet_id", "");
+  String savedRole = prefs.getString("role", "");
+  String savedServerAddr = prefs.getString("server_addr", "");
+
+  customCabinetID = new WiFiManagerParameter("cabinet_id", "รหัสตู้ (เช่น cabinet-1)", savedCabinetID.c_str(), 40);
+
+  // ช่อง Role ยังเป็น <input> ธรรมดาผูกกับ id='role' เหมือนเดิมทุกอย่าง (ของ WiFiManager เองวาด <input>
+  // ตายตัวเสมอ ไม่มีช่องให้เปลี่ยนเป็น <select> ตรงๆ ผ่าน API ปกติ) แค่เพิ่ม attribute list='role_options'
+  // เข้าไปผ่าน custom attribute string ให้ชี้ไปที่ <datalist> ที่ฝังไว้ใน <head> ของทุกหน้าผ่าน
+  // setCustomHeadElement() ด้านล่าง (นอก wm.addParameter() โดยตั้งใจ — ลองใส่ <datalist> เป็น
+  // WiFiManagerParameter ตัวที่สองมาก่อนแล้วเจอว่าจะ "ค้าง/crash ตอนกดเซฟฟอร์ม": ทุก param ที่เพิ่มด้วย
+  // wm.addParameter() ไม่ว่าจะมี id จริงหรือไม่ จะถูก doParamSave() วนเขียนค่าใส่ _value ของมันเสมอ
+  // พารามิเตอร์ที่สร้างจาก custom-HTML-only constructor (ไม่มี id) จะมี _value เป็น nullptr ตั้งแต่สร้าง
+  // พอ WiFiManager เขียนทับมันก็เท่ากับเขียนลง null pointer → hard fault ทันทีที่กดเซฟ จึงต้องใช้
+  // setCustomHeadElement() แทน เพราะไม่ผ่าน _params array เลย ปลอดภัยกว่า) ผลคือเบราว์เซอร์จะโชว์ลูกศร
+  // ดรอปดาวน์ให้เลือก front/inside ได้ แต่ยังพิมพ์เองได้ด้วยถ้าต้องการ (เบราว์เซอร์ที่ไม่รองรับ
+  // <datalist> เช่น Safari บางเวอร์ชัน จะ fallback เป็นช่องพิมพ์ธรรมดาเฉยๆ ไม่พังอะไร)
+  customRole = new WiFiManagerParameter("role", "Role (front = กล้องหน้าตู้ / inside = กล้องในตู้)",
+                                         savedRole.c_str(), 20, "list='role_options'");
+  wm.setCustomHeadElement(
+    "<datalist id='role_options'><option value='front'><option value='inside'></datalist>");
+
+  customServerAddr = new WiFiManagerParameter("server_addr", "Server Address (host:port เช่น 192.168.1.10:8080)", savedServerAddr.c_str(), 60);
+  wm.addParameter(customCabinetID);
+  wm.addParameter(customRole);
+  wm.addParameter(customServerAddr);
+  wm.setSaveParamsCallback(onParamsSaved);
+  wm.setConfigPortalTimeout(180);
+
+  // ใช้ชื่อ AP ตาม Role ที่เคยบันทึกไว้ (ถ้ามี) เพื่อแยกให้รู้ว่ากำลังต่อเข้าไปตั้งค่ากล้องตัวไหน — ถ้า
+  // ยังไม่เคยตั้ง Role เลย (บูตครั้งแรกสุด) จะ fallback เป็นชื่อกลาง "SmartLibrary-Setup" ไปก่อน
+  String apName = apNameForRole(savedRole);
+  bool wifiConnected = wm.autoConnect(apName.c_str(), AP_PASSWORD);
+  if (!wifiConnected) {
+    Serial.println("[WiFi] ต่อไม่สำเร็จ/timeout — รีสตาร์ทบอร์ดเพื่อลองใหม่");
+    delay(3000);
+    ESP.restart();
   }
 
-  int attempt = 0;
+  cabinetID = String(customCabinetID->getValue());
+  cabinetID.trim();
+  if (cabinetID.length() == 0) cabinetID = "cabinet-1";
 
-  while (WiFi.status() != WL_CONNECTED) {
-    attempt++;
-    Serial.printf("Scanning for WiFi \"%s\" (attempt %d)...\n", WIFI_SSID, attempt);
+  cameraRole = String(customRole->getValue());
+  cameraRole.trim();
+  if (cameraRole.length() == 0) cameraRole = "front";
 
-    int n = WiFi.scanNetworks();
-    bool found = false;
-    for (int i = 0; i < n; i++) {
-      if (WiFi.SSID(i) == WIFI_SSID) found = true;
-    }
-    WiFi.scanDelete();
-
-    if (!found) {
-      Serial.println("Target SSID not in range, rescanning in 3s...");
-      delay(3000);
-      continue;
-    }
-
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    unsigned long start = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - start < 10000) {
-      delay(500);
-      Serial.print(".");
-    }
-    Serial.println();
-
-    if (WiFi.status() != WL_CONNECTED) {
-      Serial.println("Connect attempt timed out, rescanning...");
-    }
+  if (!parseServerAddr(String(customServerAddr->getValue()))) {
+    Serial.println("[SETUP] ช่อง Server Address ว่างเปล่า/ไม่ถูกต้อง — คงค่า server เดิมไว้ก่อน");
   }
 
-  Serial.println("WiFi connected");
+  prefs.putString("cabinet_id", cabinetID);
+  prefs.putString("role", cameraRole);
+  prefs.putString("server_addr", serverHost + ":" + String(serverPort));
+
+  Serial.printf("[OK] WiFi Connected! IP: %s\n", WiFi.localIP().toString().c_str());
+  Serial.printf("[SETUP] Cabinet ID: %s, Role: %s, Server: %s:%d\n",
+                cabinetID.c_str(), cameraRole.c_str(), serverHost.c_str(), serverPort);
+
+  // เปิด AP ชื่อตาม Role (LibraryCamFront/LibraryCamInside) ควบคู่กับ WiFi หลักไว้ตลอดเวลา (AP+STA)
+  // เหมือนบอร์ดมอเตอร์ — เข้าไปแก้รหัสตู้/Role/Server/WiFi ได้ทุกเมื่อผ่าน http://192.168.4.1/ โดยไม่ต้อง
+  // กดปุ่ม/รอ AP ขึ้นเอง ใช้ cameraRole (ค่าล่าสุดหลัง autoConnect แล้ว ไม่ใช่ savedRole ก่อน connect)
+  // เพื่อให้ตรงกับ Role ที่กรอกจริงถ้าเพิ่งตั้งค่าครั้งแรก (หมายเหตุ: ESP32 มีเสาสัญญาณตัวเดียวใช้ร่วมกัน
+  // ทั้ง AP+STA ถ้า WiFi หลักไม่นิ่ง AP อาจดับๆติดๆตามไปด้วยชั่วขณะระหว่างที่ WiFi หลักพยายามต่อใหม่ —
+  // เป็นข้อจำกัดฮาร์ดแวร์ ไม่ใช่บั๊ก)
+  String liveApName = apNameForRole(cameraRole);
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.softAP(liveApName.c_str(), AP_PASSWORD);
+  Serial.printf("[SETUP] เปิด AP \"%s\" ควบคู่ไว้ตลอด (IP: %s)\n", liveApName.c_str(), WiFi.softAPIP().toString().c_str());
+
+  // เปิดพอร์ทัลตั้งค่าค้างไว้ที่ IP ปัจจุบันของบอร์ดบนเครือข่ายปกติด้วย ต่อเน็ตอยู่แล้วก็ยังเข้าไปแก้ค่า
+  // ได้ทุกเมื่อผ่าน http://<ip ของบอร์ด>/ (ต้องมี wm.process() เรียกใน loop() ด้วยไม่งั้นพอร์ทัลนี้จะไม่
+  // ตอบหน้าเว็บ) — ถ้าอยากล้างค่าทั้งหมดเพื่อย้ายบอร์ดนี้ไปตู้อื่น ใช้เมนู "Erase" ในพอร์ทัลได้เลย (ไม่มี
+  // ปุ่ม Factory Reset แยกแบบบอร์ดมอเตอร์ เพราะ ESP32-CAM ขา GPIO เหลือน้อยมาก ชนกับพินกล้อง/SD การ์ด
+  // หมดแล้ว)
+  wm.startWebPortal();
 }
 
 void startFileServer() {
@@ -889,7 +1043,8 @@ void setup() {
   }
 
   // Wi-Fi connection
-  connectWiFi();
+  setupWiFiAndIdentity();
+  registerCamera(); // ลงทะเบียนตัวตนกล้องนี้กับ backend ครั้งแรกทันทีหลังต่อ WiFi สำเร็จ
 
   // ต้องได้เวลาปัจจุบันมาก่อนตั้งชื่อไฟล์วิดีโอ (YYYYMMDD_HHMMSS)
   configTime(gmtOffsetSec, daylightOffsetSec, ntpServer);
@@ -917,6 +1072,28 @@ void setup() {
   }
 }
 
+unsigned long lastWifiRetryTime = 0;
+unsigned long lastRegisterAttempt = 0;
+
 void loop() {
+  wm.process(); // ให้พอร์ทัลพื้นหลัง (startWebPortal) ตอบหน้าเว็บได้ตลอด ถ้าไม่ได้เปิดอยู่จะไม่ทำอะไรเลย
+
+  unsigned long currentTime = millis();
+
+  if (WiFi.status() != WL_CONNECTED) {
+    if (currentTime - lastWifiRetryTime > 30000 || lastWifiRetryTime == 0) {
+      lastWifiRetryTime = currentTime;
+      Serial.printf("[WiFi] Reconnecting... SSID: %s\n", WiFi.SSID().c_str());
+      WiFi.reconnect();
+    }
+  }
+
+  // ลงทะเบียนตัวตนกล้องนี้กับ backend ซ้ำทุก 60 วิ เผื่อ IP เปลี่ยน (DHCP) หรือ backend restart ไปแล้ว
+  // ลืมค่าเดิม (ข้อมูลนี้เก็บแค่ใน DB ของ backend ไม่ได้ persist ฝั่งกล้อง)
+  if (currentTime - lastRegisterAttempt >= 60000 || lastRegisterAttempt == 0) {
+    lastRegisterAttempt = currentTime;
+    registerCamera();
+  }
+
   delay(1);
 }

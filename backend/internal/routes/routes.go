@@ -23,7 +23,9 @@ func Setup(app *fiber.App) {
 	app.Post("/api/simulate/fast-mode", handlers.SetFastMode)
 	app.Post("/api/simulate/force-empty", handlers.SetForceEmpty)
 
-	// เส้นทาง API สำหรับระบบกระดานควบคุม (Dashboard)
+	// เส้นทาง API สำหรับระบบกระดานควบคุม (Dashboard) — ยังไม่ระบุตู้ ผูกกับตู้เริ่มต้นเสมอ (ดู
+	// resolveCabinetID) เก็บไว้ให้ frontend เดิม (ยังไม่รู้จัก cabinet_id) ใช้งานต่อได้ระหว่างทำระบบ
+	// หลายตู้ — ของใหม่ที่รองรับหลายตู้จริงอยู่ด้านล่าง (/api/dashboard/cabinet/:id/...)
 	app.Get("/api/dashboard/cabinet", handlers.GetCabinetStatus)
 	app.Post("/api/dashboard/motor/open", handlers.OpenMotor)
 	app.Post("/api/dashboard/motor/close", handlers.CloseMotor)
@@ -33,6 +35,24 @@ func Setup(app *fiber.App) {
 	app.Get("/api/dashboard/books-in-cabinet", handlers.GetBooksInCabinet)
 	app.Get("/api/dashboard/recent-returns", handlers.GetRecentReturns)
 	app.Post("/api/dashboard/cabinet/reset", handlers.ResetCabinet)
+
+	// เส้นทางเดียวกันข้างบน แต่ระบุตู้ได้จริงผ่าน :id (ใช้ handler ตัวเดียวกัน — resolveCabinetID
+	// อ่าน :id จาก path นี้ได้อัตโนมัติ) สำหรับระบบหลายตู้
+	app.Get("/api/dashboard/cabinet/:id", handlers.GetCabinetStatus)
+	app.Post("/api/dashboard/cabinet/:id/motor/open", handlers.OpenMotor)
+	app.Post("/api/dashboard/cabinet/:id/motor/close", handlers.CloseMotor)
+	app.Post("/api/dashboard/cabinet/:id/motor/dump", handlers.DumpMotor)
+	app.Post("/api/dashboard/cabinet/:id/lock", handlers.SetCabinetLock)
+	app.Post("/api/dashboard/cabinet/:id/set-full", handlers.SetCabinetFull)
+	app.Post("/api/dashboard/cabinet/:id/reset", handlers.ResetCabinet)
+	app.Post("/api/dashboard/cabinet/:id/reset-tablet", handlers.ResetTabletSetup)
+
+	// เส้นทาง API สำหรับจัดการกองเรือตู้ (หลายตู้) — รายชื่อตู้ทั้งหมด, เปิด/ปิดให้บริการทีละตู้,
+	// กล้องลงทะเบียนตัวเอง
+	app.Get("/api/cabinets", handlers.GetCabinets)
+	app.Get("/api/cabinets/:id", handlers.GetCabinetDetail)
+	app.Post("/api/cabinets/:id/:state", handlers.SetCabinetActive)
+	app.Post("/api/cabinets/register-camera", handlers.RegisterCabinetCamera)
 	app.Get("/api/dashboard/system-settings", handlers.GetSystemSettings)
 	app.Post("/api/dashboard/system-settings", handlers.SetSystemSettings)
 	app.Get("/api/dashboard/notify-email", handlers.GetNotifyEmail)

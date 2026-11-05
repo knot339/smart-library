@@ -1,8 +1,16 @@
 package hardware
 
-import "fmt"
+import (
+	"fmt"
+	"sync"
+)
+
+// รหัสตู้ที่ใช้ก่อนที่จะมีการตั้งค่าหลายตู้จริงผ่าน WiFiManager (เฟสแรกของระบบหลายตู้ ยังมีแค่ตู้เดียว
+// ในทางปฏิบัติ แต่วางโครง registry ให้รองรับหลายตู้ไว้แล้ว)
+const DefaultCabinetID = "cabinet-1"
 
 type MockHardware struct {
+	CabinetID      string // รหัสตู้เจ้าของสถานะชุดนี้ ใช้ส่งต่อให้ OnCabinetBecameFull รู้ว่าตู้ไหนเต็ม
 	MotorStatus    string
 	MotorLogs      []string
 	IsFull         bool
@@ -12,22 +20,36 @@ type MockHardware struct {
 	IsLocked       bool // สถานะกลอนไฟฟ้าล็อกตู้ (คนละตัวกับมอเตอร์แกนชักรับหนังสือ) — true = ล็อกอยู่
 }
 
-func NewMockHardware() *MockHardware {
+func NewMockHardware(cabinetID string) *MockHardware {
 	// ตั้งค่าเริ่มต้นเป็นล็อกไว้ก่อน (fail-secure) ให้ตรงกับค่าเริ่มต้นตอนบูตของ ESP32 เอง — แค่สมมติฐาน
 	// ตอน backend เพิ่งเริ่มทำงาน ยังไม่รู้สถานะจริงจากบอร์ดจนกว่าจะมีคนสั่งล็อก/ปลดล็อกจากหน้า Dashboard
-	return &MockHardware{MotorStatus: "closed", MotorLogs: []string{}, IsFull: false, FastMode: false, ForceEmpty: false, ESP32Connected: false, IsLocked: true}
+	return &MockHardware{CabinetID: cabinetID, MotorStatus: "closed", MotorLogs: []string{}, IsFull: false, FastMode: false, ForceEmpty: false, ESP32Connected: false, IsLocked: true}
 }
 
-var Shared *MockHardware
+// registry เก็บสถานะฮาร์ดแวร์ของแต่ละตู้แยกกัน คีย์ด้วย cabinet_id — มี mutex คุมเพราะถูกเรียกจากหลาย
+// goroutine พร้อมกันได้ (MQTT callback, HTTP handler หลายคำขอพร้อมกัน)
+var registry = struct {
+	sync.Mutex
+	m map[string]*MockHardware
+}{m: map[string]*MockHardware{}}
 
-func init() {
-	Shared = NewMockHardware()
+// ForCabinet คืนสถานะฮาร์ดแวร์ของตู้ที่ระบุ สร้างใหม่ให้อัตโนมัติถ้ายังไม่เคยมี (ตู้เพิ่งต่อเข้ามาครั้งแรก)
+func ForCabinet(cabinetID string) *MockHardware {
+	registry.Lock()
+	defer registry.Unlock()
+	if hw, ok := registry.m[cabinetID]; ok {
+		return hw
+	}
+	hw := NewMockHardware(cabinetID)
+	registry.m[cabinetID] = hw
+	return hw
 }
 
 // Hook ให้ชั้นบน (handlers/main) ผูกระบบแจ้งเตือนจริง (เช่นส่งอีเมล) เข้ามาได้ โดยที่ package นี้เอง
 // ไม่ต้องรู้จัก database/SMTP เลย — เรียกเฉพาะตอนตู้ "เพิ่ง" เปลี่ยนจากว่างเป็นเต็มเท่านั้น (ดูใน SetFull)
-// กันไม่ให้ส่งซ้ำทุกครั้งที่ sensor อ่านค่า "เต็ม" เดิมซ้ำๆ ทุก 1 วินาที
-var OnCabinetBecameFull func()
+// กันไม่ให้ส่งซ้ำทุกครั้งที่ sensor อ่านค่า "เต็ม" เดิมซ้ำๆ ทุก 1 วินาที — ส่ง cabinetID ไปด้วยเพื่อให้
+// อีเมล/LINE แจ้งได้ว่าตู้ไหนเต็ม
+var OnCabinetBecameFull func(cabinetID string)
 
 func (m *MockHardware) addLog(msg string) {
 	m.MotorLogs = append([]string{msg}, m.MotorLogs...)
@@ -82,7 +104,7 @@ func (m *MockHardware) SetFull(full bool) {
 	if full {
 		m.addLog("🔴 ตู้เต็ม")
 		if !wasFull && OnCabinetBecameFull != nil {
-			go OnCabinetBecameFull() // รันแยก goroutine กันการส่งอีเมล (I/O เครือข่าย) บล็อกงานหลัก
+			go OnCabinetBecameFull(m.CabinetID) // รันแยก goroutine กันการส่งอีเมล (I/O เครือข่าย) บล็อกงานหลัก
 		}
 	} else {
 		m.addLog("🟢 ตู้ว่าง")

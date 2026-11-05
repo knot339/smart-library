@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback } from "react";
 import AviMjpegPlayer from "../../components/AviMjpegPlayer";
 import NavBar from "../../components/NavBar";
-import { API_BASE_URL as API, CAMERA_FRONT_URL, CAMERA_INSIDE_URL, CAMERA_FRONT_RECORDINGS_URL, CAMERA_INSIDE_RECORDINGS_URL, CAMERA_FRONT_FILE_URL, CAMERA_INSIDE_FILE_URL } from "../../lib/config";
+import { API_BASE_URL as API } from "../../lib/config";
 
 type MotorStatus = "closed" | "open" | "dump";
 type BookInCabinet = {
@@ -16,6 +16,10 @@ type FailedReturnRecord = {
     returned_at: string | null; returned_by_phone: string; status: string;
 };
 type LineChannelData = { id: number; targets: string[]; token_configured: boolean };
+type CameraInfo = { role: string; ip: string };
+type CabinetSummary = {
+    cabinet_id: string; name: string; active: boolean; online: boolean;
+};
 
 // การ์ดตั้งค่า LINE Official Account 1 ตัว — แยกเป็น component ของตัวเองเพราะแต่ละตัวมี draft
 // (ช่อง token ที่กำลังพิมพ์ + รายการปลายทางที่กำลังแก้) เป็นอิสระจากตัวอื่น ไม่ปนกัน
@@ -131,6 +135,15 @@ const MOTOR_CONFIG: Record<MotorStatus, {
 };
 
 export default function DashboardPage() {
+    // รายชื่อตู้ทั้งหมด (สำหรับแถบเลือกตู้ด้านบน) + ตู้ที่กำลังเลือกดูอยู่ตอนนี้
+    const [cabinets, setCabinets] = useState<CabinetSummary[]>([]);
+    const [selectedCabinetId, setSelectedCabinetId] = useState<string>("");
+    const [togglingActive, setTogglingActive] = useState(false);
+    const [resettingTablet, setResettingTablet] = useState(false);
+
+    const [cabinetName, setCabinetName] = useState("");
+    const [cabinetActive, setCabinetActive] = useState(true);
+    const [cameras, setCameras] = useState<CameraInfo[]>([]);
     const [activeCamera, setActiveCamera] = useState<"front" | "inside">("front");
     const [cameraTab, setCameraTab] = useState<"live" | "history">("live");
     const [confirmHistoryTab, setConfirmHistoryTab] = useState(false);
@@ -174,6 +187,32 @@ export default function DashboardPage() {
         setTimeout(() => setMsg({ text: "", type: "" }), 3000);
     };
 
+    // ดึงรายชื่อตู้ทั้งหมดไว้ทำแถบเลือกด้านบน — ตู้แรกที่ได้มาจะถูกเลือกเป็นค่าเริ่มต้นอัตโนมัติ
+    // ถ้ายังไม่เคยเลือกตู้ไหนมาก่อนเลย (selectedCabinetId ว่าง)
+    const fetchCabinetList = useCallback(async () => {
+        try {
+            const res = await fetch(`${API}/cabinets`);
+            const data = await res.json();
+            const list: CabinetSummary[] = data.cabinets || [];
+            setCabinets(list);
+            setSelectedCabinetId((prev) => prev || (list[0]?.cabinet_id ?? ""));
+        } catch { }
+    }, []);
+
+    useEffect(() => {
+        fetchCabinetList();
+        const t = setInterval(fetchCabinetList, 5000);
+        return () => clearInterval(t);
+    }, [fetchCabinetList]);
+
+    // สร้าง URL ของกล้องแต่ละตัวจาก IP ที่กล้องลงทะเบียนไว้กับ backend เอง (POST /api/cabinets/register-camera)
+    // แทนการ hardcode ผ่าน .env แบบเดิม — พอร์ตคงที่ตามที่ตั้งไว้ในเฟิร์มแวร์กล้อง (81=สตรีมสด,
+    // 82=รายการวิดีโอย้อนหลัง, 83=โหลดไฟล์วิดีโอ) ถ้ายังไม่มีกล้อง role นั้นลงทะเบียนไว้ จะคืนค่าว่าง
+    const cameraBaseUrl = useCallback((role: "front" | "inside", port: number): string => {
+        const cam = cameras.find((c) => c.role === role);
+        return cam ? `http://${cam.ip}:${port}` : "";
+    }, [cameras]);
+
     useEffect(() => {
         const update = () => setTime(new Date().toLocaleTimeString("th-TH", {
             hour: "2-digit", minute: "2-digit", second: "2-digit",
@@ -184,20 +223,27 @@ export default function DashboardPage() {
     }, []);
 
     const fetchCabinet = useCallback(async () => {
+        if (!selectedCabinetId) return;
         try {
-            // ใช้ /api/status แทน /api/dashboard/cabinet เพราะมี esp32_connected ด้วย (รู้จาก MQTT
-            // Last Will/Testament ของ ESP32 จริง) — เดิมการ์ด "การเชื่อมต่อ" เช็คแค่ว่า backend
-            // เว็บตอบกลับไหม ซึ่งจะเขียวเสมอตราบใดที่ backend รันอยู่ ต่อให้ ESP32 ไม่ได้ต่ออยู่เลยก็ตาม
-            const res = await fetch(`${API}/status`);
+            // ใช้ /api/cabinets/:id แทน /api/status เดิม เพราะได้ข้อมูลครบกว่าในคำขอเดียว (online มาจาก MQTT
+            // Last Will/Testament ของ ESP32 จริง, active บอกว่าตู้นี้เปิด/ปิดให้บริการอยู่, cameras คือ
+            // รายการกล้องที่ลงทะเบียนไว้กับตู้นี้)
+            const res = await fetch(`${API}/cabinets/${selectedCabinetId}`);
+            if (!res.ok) throw new Error("not found");
             const data = await res.json();
-            setIsFull(data.is_full);
+            setCabinetName(data.name || selectedCabinetId);
+            setCabinetActive(data.active !== false);
+            setIsFull(!!data.is_full);
             setMotorStatus(data.motor_status as MotorStatus);
-            setEsp32Connected(!!data.esp32_connected);
+            setEsp32Connected(!!data.online);
             setIsLocked(!!data.is_locked);
+            setCameras(data.cameras || []);
             setCabinetOnline(true);
         } catch { setCabinetOnline(false); setEsp32Connected(false); }
-    }, []);
+    }, [selectedCabinetId]);
 
+    // books-in-cabinet/borrows ยังเป็น endpoint กลาง ไม่ได้แบ่งตามตู้ (BorrowRecord ในฐานข้อมูลยังไม่มี
+    // คอลัมน์ cabinet_id) — ของเดิมเป็นแบบนี้มาก่อนแล้วตั้งแต่ยังเป็นระบบตู้เดียว ยังไม่ได้แก้ในเฟสนี้
     const fetchBooks = useCallback(async () => {
         try {
             const res = await fetch(`${API}/dashboard/books-in-cabinet`);
@@ -223,6 +269,8 @@ export default function DashboardPage() {
     }, [fetchCabinet, fetchBooks, fetchBorrowRecords]);
 
     // ดึงรายชื่ออีเมลแจ้งเตือนตู้เต็มที่ตั้งไว้ (ครั้งเดียวตอนโหลดหน้า ไม่ต้อง poll ซ้ำเหมือนสถานะตู้)
+    // หมายเหตุ: การแจ้งเตือน/ตั้งค่าตู้ฝั่งแท็บเล็ตเป็นค่ากลางของทั้งระบบ ไม่ได้แยกตามตู้ (ตั้งใจออกแบบไว้
+    // แบบนี้ตั้งแต่ Phase 1 เพื่อจำกัดขอบเขตงาน)
     useEffect(() => {
         (async () => {
             try {
@@ -388,7 +436,8 @@ export default function DashboardPage() {
 
     const fetchRecordings = useCallback(async (camera: "front" | "inside") => {
         setLoadingRecordings(true);
-        const baseUrl = camera === "front" ? CAMERA_FRONT_RECORDINGS_URL : CAMERA_INSIDE_RECORDINGS_URL;
+        const baseUrl = cameraBaseUrl(camera, 82);
+        if (!baseUrl) { setRecordings([]); setLoadingRecordings(false); return; }
         try {
             const res = await fetch(`${baseUrl}/recordings`);
             if (res.ok) {
@@ -402,7 +451,7 @@ export default function DashboardPage() {
             setRecordings([]);
         }
         setLoadingRecordings(false);
-    }, []);
+    }, [cameraBaseUrl]);
 
     useEffect(() => {
         if (cameraTab === "history") {
@@ -428,7 +477,7 @@ export default function DashboardPage() {
     const sendMotorCommand = async (cmd: "open" | "close" | "dump") => {
         setLoadingMotor(cmd);
         try {
-            const res = await fetch(`${API}/dashboard/motor/${cmd}`, { method: "POST" });
+            const res = await fetch(`${API}/dashboard/cabinet/${selectedCabinetId}/motor/${cmd}`, { method: "POST" });
             const data = await res.json();
             setMotorStatus(data.motor_status as MotorStatus);
             notify(data.message);
@@ -440,7 +489,7 @@ export default function DashboardPage() {
     const handleToggleLock = async () => {
         setLockLoading(true);
         try {
-            const res = await fetch(`${API}/dashboard/cabinet/lock`, {
+            const res = await fetch(`${API}/dashboard/cabinet/${selectedCabinetId}/lock`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ locked: !isLocked }),
@@ -456,6 +505,38 @@ export default function DashboardPage() {
         setLockLoading(false);
     };
 
+    // เปิด/ปิดให้บริการตู้ที่กำลังเลือกดูอยู่
+    const handleToggleActive = async () => {
+        setTogglingActive(true);
+        try {
+            const action = cabinetActive ? "deactivate" : "activate";
+            const res = await fetch(`${API}/cabinets/${selectedCabinetId}/${action}`, { method: "POST" });
+            const data = await res.json();
+            if (res.ok) {
+                notify(data.message || "สำเร็จ");
+                fetchCabinet();
+                fetchCabinetList();
+            } else {
+                notify(data.error || "เกิดข้อผิดพลาด", "error");
+            }
+        } catch { notify("เกิดข้อผิดพลาด", "error"); }
+        setTogglingActive(false);
+    };
+
+    // สั่งแท็บเล็ตของตู้นี้ (ถ้าออนไลน์/เปิดหน้าเว็บอยู่) ให้ล้างรหัสตู้ที่บันทึกไว้แล้วกลับไปหน้าจอตั้งค่า
+    // ใหม่ — ใช้ตอนตั้งรหัสตู้ผิดไปตอนติดตั้งแท็บเล็ต ไม่ต้องเดินไปแตะตัวเครื่องเอง (ถ้าแท็บเล็ตออฟไลน์อยู่
+    // คำสั่งนี้จะไม่มีผล ต้องไปกดปุ่มโลโก้ 5 ครั้งที่ตัวเครื่องแทน — ข้อความตอบกลับจาก backend จะบอกไว้)
+    const handleResetTablet = async () => {
+        if (!window.confirm(`ต้องการล้างการตั้งค่าแท็บเล็ตของตู้ "${cabinetName || selectedCabinetId}" หรือไม่?\nแท็บเล็ตจะกลับไปหน้าจอให้กรอกรหัสตู้ใหม่ทันที (ถ้าออนไลน์อยู่)`)) return;
+        setResettingTablet(true);
+        try {
+            const res = await fetch(`${API}/dashboard/cabinet/${selectedCabinetId}/reset-tablet`, { method: "POST" });
+            const data = await res.json();
+            notify(data.message || "สำเร็จ", res.ok ? "success" : "error");
+        } catch { notify("เกิดข้อผิดพลาด", "error"); }
+        setResettingTablet(false);
+    };
+
     const fmtDate = (d: string) =>
         d ? new Date(d).toLocaleString("th-TH", { dateStyle: "short", timeStyle: "short" }) : "-";
 
@@ -466,7 +547,7 @@ export default function DashboardPage() {
 
     const handleResetCabinet = async () => {
         try {
-            const res = await fetch(`${API}/dashboard/cabinet/reset`, { method: "POST" });
+            const res = await fetch(`${API}/dashboard/cabinet/${selectedCabinetId}/reset`, { method: "POST" });
             const data = await res.json();
             setMotorStatus(data.motor_status as MotorStatus);
             setBooksInCabinet([]);
@@ -474,6 +555,9 @@ export default function DashboardPage() {
         } catch { notify("เกิดข้อผิดพลาด", "error"); }
         setConfirmReset(false);
     };
+
+    const frontStreamUrl = cameraBaseUrl("front", 81) ? `${cameraBaseUrl("front", 81)}/stream` : "";
+    const insideStreamUrl = cameraBaseUrl("inside", 81) ? `${cameraBaseUrl("inside", 81)}/stream` : "";
 
     return (
         <div className="min-h-screen bg-gray-100">
@@ -504,7 +588,65 @@ export default function DashboardPage() {
                 </div>
             </div>
 
+            {/* แถบเลือกตู้ — แทนที่หน้ารวมรายชื่อตู้แยกต่างหากแบบเดิม ด้วยแถบแท็บเดียวให้สลับดูได้ในหน้าเดียว */}
+            <div className="bg-white border-b shadow-sm sticky top-0 z-30">
+                <div className="max-w-5xl mx-auto px-6 flex items-center gap-2 overflow-x-auto">
+                    {cabinets.map((cab) => (
+                        <button
+                            key={cab.cabinet_id}
+                            onClick={() => setSelectedCabinetId(cab.cabinet_id)}
+                            className={`flex items-center gap-2 px-4 py-3 text-sm font-semibold whitespace-nowrap border-b-2 transition ${
+                                selectedCabinetId === cab.cabinet_id
+                                    ? "border-blue-600 text-blue-700"
+                                    : "border-transparent text-gray-500 hover:text-gray-700"
+                            }`}
+                        >
+                            <span className={`w-2 h-2 rounded-full ${cab.online ? "bg-green-500" : "bg-red-400"}`} />
+                            {cab.name || cab.cabinet_id}
+                            {!cab.active && <span className="text-gray-300 text-xs">(ปิดบริการ)</span>}
+                        </button>
+                    ))}
+                    {cabinets.length === 0 && (
+                        <span className="text-gray-300 text-sm py-3">ยังไม่มีตู้ในระบบ</span>
+                    )}
+                </div>
+            </div>
+
+            {!cabinetActive && selectedCabinetId && (
+                <div className="bg-yellow-100 border-b border-yellow-300 text-yellow-800 px-6 py-3 text-center text-sm font-semibold">
+                    ⏸️ ตู้นี้ถูกปิดให้บริการชั่วคราวอยู่ — หน้าแท็บเล็ตของตู้นี้จะไม่รับคืนหนังสือจนกว่าจะเปิดให้บริการอีกครั้ง
+                </div>
+            )}
+
+            {!selectedCabinetId ? (
+                <div className="p-6 max-w-5xl mx-auto text-center text-gray-400 py-16">
+                    {cabinets.length === 0 ? "ยังไม่มีตู้ในระบบ" : "⏳ กำลังโหลด..."}
+                </div>
+            ) : (
             <div className="p-6 max-w-5xl mx-auto">
+
+                <div className="flex items-center justify-between gap-4 mb-4 flex-wrap">
+                    <h2 className="text-lg font-bold text-gray-700">{cabinetName || selectedCabinetId} <span className="text-gray-400 text-sm font-mono">({selectedCabinetId})</span></h2>
+                    <div className="flex items-center gap-2">
+                        {/* ใช้แก้ตอนตั้งรหัสตู้ผิดไปตอนติดตั้งแท็บเล็ต — สั่งผ่าน WebSocket ที่แท็บเล็ตต่อค้างไว้
+                            (ถ้าออฟไลน์อยู่จะไม่มีผล ต้องไปกดปุ่มโลโก้ 5 ครั้งที่ตัวเครื่องแทน) */}
+                        <button
+                            onClick={handleResetTablet}
+                            disabled={resettingTablet}
+                            title="สั่งให้แท็บเล็ตของตู้นี้กลับไปหน้าจอตั้งค่ารหัสตู้ใหม่"
+                            className="bg-gray-100 hover:bg-gray-200 disabled:bg-gray-50 disabled:text-gray-300 disabled:cursor-not-allowed text-gray-600 font-semibold px-4 py-2 rounded-lg text-sm transition whitespace-nowrap"
+                        >
+                            {resettingTablet ? "⏳ กำลังสั่ง..." : "🧹 เคลียร์การตั้งค่าแท็บเล็ต"}
+                        </button>
+                        <button
+                            onClick={handleToggleActive}
+                            disabled={togglingActive}
+                            className={`${cabinetActive ? "bg-red-500 hover:bg-red-600" : "bg-green-600 hover:bg-green-700"} disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed text-white font-semibold px-4 py-2 rounded-lg text-sm transition whitespace-nowrap`}
+                        >
+                            {togglingActive ? "⏳ กำลังสั่ง..." : cabinetActive ? "⏸️ ปิดให้บริการชั่วคราว" : "▶️ เปิดให้บริการ"}
+                        </button>
+                    </div>
+                </div>
 
                 {/* Status Cards */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
@@ -666,13 +808,13 @@ export default function DashboardPage() {
                         <div className="flex items-center gap-4">
                             <h2 className="text-lg font-bold text-gray-700">📷 กล้องวงจรปิดตู้รับคืน</h2>
                             <div className="flex bg-gray-100 p-1 rounded-lg">
-                                <button 
+                                <button
                                     onClick={() => setCameraTab("live")}
                                     className={`px-3 py-1.5 rounded-md text-sm font-semibold transition ${cameraTab === "live" ? "bg-white shadow text-blue-700" : "text-gray-500 hover:text-gray-700"}`}
                                 >
                                     🔴 สด (Live)
                                 </button>
-                                <button 
+                                <button
                                     onClick={() => setConfirmHistoryTab(true)}
                                     className={`px-3 py-1.5 rounded-md text-sm font-semibold transition ${cameraTab === "history" ? "bg-white shadow text-blue-700" : "text-gray-500 hover:text-gray-700"}`}
                                 >
@@ -682,13 +824,13 @@ export default function DashboardPage() {
                         </div>
                         {cameraTab === "history" && (
                             <div className="flex bg-gray-100 p-1 rounded-lg">
-                                <button 
+                                <button
                                     onClick={() => setActiveCamera("front")}
                                     className={`px-4 py-2 rounded-md text-sm font-semibold transition ${activeCamera === "front" ? "bg-white shadow text-blue-700" : "text-gray-500 hover:text-gray-700"}`}
                                 >
                                     หน้าตู้
                                 </button>
-                                <button 
+                                <button
                                     onClick={() => setActiveCamera("inside")}
                                     className={`px-4 py-2 rounded-md text-sm font-semibold transition ${activeCamera === "inside" ? "bg-white shadow text-blue-700" : "text-gray-500 hover:text-gray-700"}`}
                                 >
@@ -697,13 +839,13 @@ export default function DashboardPage() {
                             </div>
                         )}
                     </div>
-                    
+
                     {cameraTab === "live" ? (
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full">
                             <div className="bg-black rounded-xl overflow-hidden aspect-video flex items-center justify-center relative w-full group">
                                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                                <img 
-                                    src={CAMERA_FRONT_URL} 
+                                <img
+                                    src={frontStreamUrl || "https://placehold.co/600x400?text=Camera+Not+Registered"}
                                     alt="Camera Front"
                                     className="w-full h-full object-contain"
                                     onError={(e) => {
@@ -723,8 +865,8 @@ export default function DashboardPage() {
                             </div>
                             <div className="bg-black rounded-xl overflow-hidden aspect-video flex items-center justify-center relative w-full group">
                                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                                <img 
-                                    src={CAMERA_INSIDE_URL} 
+                                <img
+                                    src={insideStreamUrl || "https://placehold.co/600x400?text=Camera+Not+Registered"}
                                     alt="Camera Inside"
                                     className="w-full h-full object-contain"
                                     onError={(e) => {
@@ -749,7 +891,7 @@ export default function DashboardPage() {
                                 <h3 className="font-semibold text-gray-700 flex items-center gap-2">
                                     📼 ประวัติวิดีโอ - {activeCamera === "front" ? "กล้องหน้าตู้" : "กล้องในตู้"}
                                 </h3>
-                                <button 
+                                <button
                                     onClick={() => fetchRecordings(activeCamera)}
                                     disabled={loadingRecordings}
                                     className="text-blue-600 hover:text-blue-800 text-sm font-medium flex items-center gap-1 disabled:opacity-50 bg-white border border-blue-200 px-3 py-1.5 rounded-lg shadow-sm"
@@ -758,7 +900,7 @@ export default function DashboardPage() {
                                 </button>
                             </div>
                             <div className="bg-yellow-50 border-b border-yellow-200 px-4 py-2 text-xs text-yellow-800 flex items-center gap-2">
-                                <span className="text-lg">⚠️</span> 
+                                <span className="text-lg">⚠️</span>
                                 <span><strong>คำเตือน:</strong> การเปิดดู/รีเฟรชรายการนี้ หรือการเล่นวิดีโอ จะทำให้กล้องหยุดบันทึกช่วงเวลานั้นชั่วคราว</span>
                             </div>
                             <div className="flex-1 overflow-x-auto overflow-y-auto p-0 relative">
@@ -788,7 +930,7 @@ export default function DashboardPage() {
                                                     const videoDate = new Date(Number(y), Number(m) - 1, Number(d), Number(H), Number(M), Number(S));
                                                     matchedBookTitle = findBookTitleForVideoTime(videoDate);
                                                 }
-                                                const fileBaseUrl = activeCamera === "front" ? CAMERA_FRONT_FILE_URL : CAMERA_INSIDE_FILE_URL;
+                                                const fileBaseUrl = cameraBaseUrl(activeCamera, 83);
                                                 const fileUrl = `${fileBaseUrl}/recordings/file?file=${rec.name}`;
 
                                                 return (
@@ -816,13 +958,13 @@ export default function DashboardPage() {
                                                                 <span className="text-gray-400 text-xs italic">ยังไม่สมบูรณ์</span>
                                                             ) : (
                                                                 <div className="flex justify-end gap-2">
-                                                                    <button 
+                                                                    <button
                                                                         onClick={() => setPlayingVideo(fileUrl)}
                                                                         className="bg-blue-100 hover:bg-blue-200 text-blue-700 px-3 py-1.5 rounded-lg text-xs font-semibold transition inline-flex items-center gap-1"
                                                                     >
                                                                         ▶️ เล่นวิดีโอ
                                                                     </button>
-                                                                    <a 
+                                                                    <a
                                                                         href={fileUrl}
                                                                         target="_blank"
                                                                         rel="noopener noreferrer"
@@ -915,6 +1057,7 @@ export default function DashboardPage() {
 
                 <p className="text-center text-gray-400 text-xs mt-4">🔄 ข้อมูลอัปเดตอัตโนมัติทุก 5 วินาที</p>
             </div>
+            )}
             {/* หน้าต่างตั้งค่าการแจ้งเตือนตอนตู้เต็ม — เลือกช่องทางจากเมนูก่อน แล้วค่อยเพิ่ม/ลบรายการ
                 ปลายทางของช่องทางนั้นๆ ได้หลายรายการ (แทนการ์ดแยกที่ตรึงอยู่หน้าหลักตลอดเวลาแบบเดิม) */}
             {notifySettingsOpen && (
@@ -1248,15 +1391,15 @@ export default function DashboardPage() {
             {/* หน้าต่างดูกล้องสดเต็มจอ */}
             {fullScreenCamera && (
                 <div className="fixed inset-0 bg-black z-[70] flex flex-col items-center justify-center p-0">
-                    <button 
+                    <button
                         onClick={() => setFullScreenCamera(null)}
                         className="absolute top-4 right-4 bg-white/20 hover:bg-white/40 text-white rounded-full w-12 h-12 flex items-center justify-center backdrop-blur-sm z-10 text-2xl transition"
                     >
                         ✕
                     </button>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img 
-                        src={fullScreenCamera === "front" ? CAMERA_FRONT_URL : CAMERA_INSIDE_URL} 
+                    <img
+                        src={(fullScreenCamera === "front" ? frontStreamUrl : insideStreamUrl) || "https://placehold.co/1280x720?text=Camera+Not+Registered"}
                         alt={`Camera Fullscreen ${fullScreenCamera}`}
                         className="w-full h-full object-contain"
                         onError={(e) => {

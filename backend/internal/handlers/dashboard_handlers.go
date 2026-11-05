@@ -46,26 +46,43 @@ func upsertSetting(key, value string) {
 	}
 }
 
-// settleMs มีผลเฉพาะตอน status == "dump" เท่านั้น (ส่ง 0 ไปสำหรับ open/close) — บอก ESP32 ว่าต้องพัก
-// การเช็คเซนเซอร์ตู้เต็มนานแค่ไหนหลังเทหนังสือเสร็จ ให้ตรงกับค่าที่ตั้งไว้ในหน้า Dashboard จริงๆ แทนที่
-// ESP32 จะใช้ค่าคงที่ของตัวเองซึ่งอาจไม่ตรงกับที่ผู้ดูแลตั้งไว้
-func publishMotor(status string, settleMs int) {
+// resolveCabinetID อ่าน cabinet_id จาก URL param ":id" ถ้ามี (เส้นทางใหม่ที่รองรับหลายตู้) ไม่งั้น
+// fallback เป็นตู้เริ่มต้น — ทำให้ handler ตัวเดียวใช้ได้ทั้งเส้นทางเดิม (ยังไม่ระบุตู้ เพื่อไม่ให้
+// frontend เดิมที่ยังไม่รู้จัก cabinet_id พังระหว่างทำระบบหลายตู้) และเส้นทางใหม่แบบ /cabinet/:id/...
+func resolveCabinetID(c *fiber.Ctx) string {
+	if id := c.Params("id"); id != "" {
+		return id
+	}
+	return hardware.DefaultCabinetID
+}
+
+// publishToCabinet ส่งข้อความไปยังตู้ที่ระบุผ่าน MQTT topic ของตู้นั้นโดยเฉพาะ (smartlibrary/<cabinet_id>/control)
+func publishToCabinet(cabinetID string, msg WSMessage) {
 	if MQTTClient != nil && MQTTClient.IsConnected() {
-		msg := WSMessage{Type: "motor", Value: status}
-		if status == "dump" && settleMs > 0 {
-			msg.SettleMs = settleMs
-		}
 		payload, _ := json.Marshal(msg)
-		token := MQTTClient.Publish("smartlibrary/esp32/control", 0, false, payload)
+		topic := "smartlibrary/" + cabinetID + "/control"
+		token := MQTTClient.Publish(topic, 0, false, payload)
 		token.WaitTimeout(2 * time.Second)
 	}
 }
 
+// settleMs มีผลเฉพาะตอน status == "dump" เท่านั้น (ส่ง 0 ไปสำหรับ open/close) — บอก ESP32 ว่าต้องพัก
+// การเช็คเซนเซอร์ตู้เต็มนานแค่ไหนหลังเทหนังสือเสร็จ ให้ตรงกับค่าที่ตั้งไว้ในหน้า Dashboard จริงๆ แทนที่
+// ESP32 จะใช้ค่าคงที่ของตัวเองซึ่งอาจไม่ตรงกับที่ผู้ดูแลตั้งไว้
+func publishMotor(cabinetID, status string, settleMs int) {
+	msg := WSMessage{Type: "motor", Value: status}
+	if status == "dump" && settleMs > 0 {
+		msg.SettleMs = settleMs
+	}
+	publishToCabinet(cabinetID, msg)
+}
+
 func GetCabinetStatus(c *fiber.Ctx) error {
+	hw := hardware.ForCabinet(resolveCabinetID(c))
 	return c.JSON(fiber.Map{
-		"is_full":      hardware.Shared.IsFull,
-		"motor_status": hardware.Shared.MotorStatus,
-		"is_locked":    hardware.Shared.IsLocked,
+		"is_full":      hw.IsFull,
+		"motor_status": hw.MotorStatus,
+		"is_locked":    hw.IsLocked,
 		"status":       "online",
 	})
 }
@@ -73,6 +90,7 @@ func GetCabinetStatus(c *fiber.Ctx) error {
 // สั่งล็อก/ปลดล็อกกลอนไฟฟ้าของตู้ (คนละตัวกับมอเตอร์แกนชักที่รับหนังสือ) — อัปเดตสถานะในฝั่ง backend
 // ทันทีแบบ optimistic (เหมือนกับ OpenMotor/CloseMotor/DumpMotor) ไม่รอ ESP32 ยืนยันกลับ
 func SetCabinetLock(c *fiber.Ctx) error {
+	cabinetID := resolveCabinetID(c)
 	type SetLockRequest struct {
 		Locked bool `json:"locked"`
 	}
@@ -81,23 +99,19 @@ func SetCabinetLock(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{"error": "ข้อมูลไม่ถูกต้อง"})
 	}
 
-	hardware.Shared.SetLocked(req.Locked)
-	if MQTTClient != nil && MQTTClient.IsConnected() {
-		value := "lock"
-		if !req.Locked {
-			value = "unlock"
-		}
-		msg := WSMessage{Type: "lock", Value: value}
-		payload, _ := json.Marshal(msg)
-		token := MQTTClient.Publish("smartlibrary/esp32/control", 0, false, payload)
-		token.WaitTimeout(2 * time.Second)
+	hw := hardware.ForCabinet(cabinetID)
+	hw.SetLocked(req.Locked)
+	value := "lock"
+	if !req.Locked {
+		value = "unlock"
 	}
+	publishToCabinet(cabinetID, WSMessage{Type: "lock", Value: value})
 
 	message := "ล็อกตู้แล้ว"
 	if !req.Locked {
 		message = "ปลดล็อกตู้แล้ว"
 	}
-	return c.JSON(fiber.Map{"message": message, "is_locked": hardware.Shared.IsLocked})
+	return c.JSON(fiber.Map{"message": message, "is_locked": hw.IsLocked})
 }
 
 // ดึงค่าระยะเวลารอให้หนังสือตกลงในตู้หลังเทเสร็จที่ตั้งไว้ (ถ้ายังไม่เคยตั้งค่าไว้เลย คืนค่าเริ่มต้น)
@@ -330,14 +344,16 @@ func getConfiguredNotifyEmails() []string {
 // ทุกครั้งที่ตู้เพิ่งเปลี่ยนจากว่างเป็นเต็ม (ไม่ใช่ทุกครั้งที่ poll สถานะเดิมซ้ำ) ส่งทั้งอีเมลและ LINE
 // (ถ้าตั้งค่าไว้) เป็นอิสระจากกัน — ช่องทางหนึ่ง/ตัวหนึ่งส่งไม่สำเร็จไม่กระทบตัวอื่น ส่งผ่านทุก LINE
 // Official Account ที่ตั้งไว้ (แต่ละตัวมี Token และปลายทางของตัวเอง รองรับส่งไปคนละกลุ่มได้)
-func SendCabinetFullNotification() {
+// cabinetID ใช้แค่ log ตอนนี้ (ระบบแจ้งเตือน/รายการหนังสือในตู้ยังเป็นภาพรวมทั้งระบบ ไม่ได้แยกตามตู้
+// เพราะ BorrowRecord ยังไม่มี cabinet_id — ปล่อยไว้ก่อนตามขอบเขตของเฟสนี้)
+func SendCabinetFullNotification(cabinetID string) {
 	books := getBooksInCabinetRows()
 
 	emails := getConfiguredNotifyEmails()
 	if err := notify.SendCabinetFullAlert(emails, books); err != nil {
-		log.Printf("⚠️ ส่งอีเมลแจ้งเตือนตู้เต็มไม่สำเร็จ: %v", err)
+		log.Printf("⚠️ ส่งอีเมลแจ้งเตือนตู้เต็ม [%s] ไม่สำเร็จ: %v", cabinetID, err)
 	} else {
-		log.Printf("📧 ส่งอีเมลแจ้งเตือนตู้เต็มไปที่ %s สำเร็จ (%d เล่ม)", strings.Join(emails, ", "), len(books))
+		log.Printf("📧 ส่งอีเมลแจ้งเตือนตู้เต็ม [%s] ไปที่ %s สำเร็จ (%d เล่ม)", cabinetID, strings.Join(emails, ", "), len(books))
 	}
 
 	var lineChannels []models.LineChannel
@@ -430,29 +446,35 @@ func getBooksInCabinetRows() []notify.CabinetBookRow {
 }
 
 func OpenMotor(c *fiber.Ctx) error {
-	hardware.Shared.SetOpen()
-	publishMotor("open", 0)
+	cabinetID := resolveCabinetID(c)
+	hw := hardware.ForCabinet(cabinetID)
+	hw.SetOpen()
+	publishMotor(cabinetID, "open", 0)
 	return c.JSON(fiber.Map{
 		"message":      "เปิดรับหนังสือแล้ว",
-		"motor_status": hardware.Shared.MotorStatus,
+		"motor_status": hw.MotorStatus,
 	})
 }
 
 func CloseMotor(c *fiber.Ctx) error {
-	hardware.Shared.SetClosed()
-	publishMotor("close", 0)
+	cabinetID := resolveCabinetID(c)
+	hw := hardware.ForCabinet(cabinetID)
+	hw.SetClosed()
+	publishMotor(cabinetID, "close", 0)
 	return c.JSON(fiber.Map{
 		"message":      "ปิดตู้แล้ว",
-		"motor_status": hardware.Shared.MotorStatus,
+		"motor_status": hw.MotorStatus,
 	})
 }
 
 func DumpMotor(c *fiber.Ctx) error {
-	hardware.Shared.SetDump()
-	publishMotor("dump", getConfiguredDumpSettleMs())
+	cabinetID := resolveCabinetID(c)
+	hw := hardware.ForCabinet(cabinetID)
+	hw.SetDump()
+	publishMotor(cabinetID, "dump", getConfiguredDumpSettleMs())
 	return c.JSON(fiber.Map{
 		"message":      "เทหนังสือลงเก็บแล้ว",
-		"motor_status": hardware.Shared.MotorStatus,
+		"motor_status": hw.MotorStatus,
 	})
 }
 
@@ -464,10 +486,11 @@ func SetCabinetFull(c *fiber.Ctx) error {
 	if err := c.BodyParser(req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "ข้อมูลไม่ถูกต้อง"})
 	}
-	hardware.Shared.SetFull(req.IsFull)
+	hw := hardware.ForCabinet(resolveCabinetID(c))
+	hw.SetFull(req.IsFull)
 	return c.JSON(fiber.Map{
 		"message": "ตั้งค่าสถานะตู้สำเร็จ",
-		"is_full": hardware.Shared.IsFull,
+		"is_full": hw.IsFull,
 	})
 }
 
@@ -547,7 +570,8 @@ func GetRecentReturns(c *fiber.Ctx) error {
 }
 
 func ResetCabinet(c *fiber.Ctx) error {
-	hardware.Shared.SetClosed()
+	hw := hardware.ForCabinet(resolveCabinetID(c))
+	hw.SetClosed()
 
 	database.DB.Model(&models.BorrowRecord{}).
 		Where("status = ?", "returned").
@@ -555,6 +579,23 @@ func ResetCabinet(c *fiber.Ctx) error {
 
 	return c.JSON(fiber.Map{
 		"message":      "รีเซ็ตรายการในตู้สำเร็จ",
-		"motor_status": hardware.Shared.MotorStatus,
+		"motor_status": hw.MotorStatus,
+	})
+}
+
+// สั่งแท็บเล็ตที่ผูกกับตู้นี้อยู่ (ถ้าเปิดหน้าเว็บ+ต่อ WebSocket ค้างไว้อยู่) ให้ล้างรหัสตู้ที่บันทึกไว้
+// แล้วกลับไปโชว์หน้าจอตั้งค่าใหม่ — ใช้แก้ตอนตั้งรหัสตู้ผิดตอนติดตั้ง ไม่ต้องเดินไปแตะตัวเครื่องเอง
+func ResetTabletSetup(c *fiber.Ctx) error {
+	cabinetID := resolveCabinetID(c)
+	notified := notifyTabletsResetSetup(cabinetID)
+	if notified == 0 {
+		return c.JSON(fiber.Map{
+			"message":  "ไม่พบแท็บเล็ตที่ออนไลน์อยู่สำหรับตู้นี้ — ต้องไปกดที่ปุ่มโลโก้ 5 ครั้งที่ตัวเครื่องแทน",
+			"notified": 0,
+		})
+	}
+	return c.JSON(fiber.Map{
+		"message":  "สั่งเคลียร์การตั้งค่าแท็บเล็ตแล้ว",
+		"notified": notified,
 	})
 }

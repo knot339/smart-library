@@ -14,6 +14,61 @@ export default function TabletPage() {
   const [activeBorrows, setActiveBorrows] = useState<PatronBorrow[]>([]);
   const [isFull, setIsFull] = useState(false);
   const [esp32Connected, setEsp32Connected] = useState(true); // true ไว้ก่อนกันจอกระพริบตอนเพิ่งโหลดหน้า
+
+  // รหัสตู้ที่แท็บเล็ตเครื่องนี้ผูกอยู่ — ตั้งครั้งเดียวตอนติดตั้งเครื่อง เก็บถาวรใน localStorage ของ
+  // เบราว์เซอร์ (ไม่หายตอนปิด-เปิดเครื่องใหม่ หายเฉพาะตอน clear browsing data/ใช้ incognito) ไม่มีค่า
+  // นี้แปลว่ายังไม่เคยตั้งค่าเลย (เครื่องใหม่/ยังไม่ติดตั้ง) ต้องโชว์หน้าจอตั้งค่าก่อนใช้งานจริง
+  const CABINET_ID_STORAGE_KEY = "smart_library_cabinet_id";
+  const [cabinetId, setCabinetId] = useState("");
+  const [cabinetIdReady, setCabinetIdReady] = useState(false); // true หลังเช็ค localStorage ครั้งแรกแล้ว
+  const [cabinetIdInput, setCabinetIdInput] = useState("");
+  // เผื่อไว้ก่อน (true) กันจอกระพริบไปโชว์ "ปิดให้บริการชั่วคราว" ชั่ววูบตอนเพิ่งโหลดหน้า/ยังไม่ได้ค่าจริง
+  const [cabinetActive, setCabinetActive] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        setCabinetId(localStorage.getItem(CABINET_ID_STORAGE_KEY) || "");
+      } catch { }
+      setCabinetIdReady(true);
+    })();
+  }, []);
+
+  const handleSetupCabinet = () => {
+    const trimmed = cabinetIdInput.trim();
+    if (!trimmed) return;
+    try { localStorage.setItem(CABINET_ID_STORAGE_KEY, trimmed); } catch { }
+    setCabinetId(trimmed);
+  };
+
+  // ล้างรหัสตู้ที่บันทึกไว้ แล้วกลับไปโชว์หน้าจอตั้งค่าใหม่ — เรียกได้ 2 ทาง: (1) เจ้าหน้าที่กดปุ่ม
+  // "เคลียร์การตั้งค่าแท็บเล็ต" จากหน้า Dashboard ของตู้นี้ (ส่งมาผ่าน WebSocket ข้อความ
+  // {"type":"reset_setup"} ไม่ต้องยืนยันซ้ำที่นี่ เพราะยืนยันจากฝั่ง Dashboard มาแล้ว) หรือ (2) แตะโลโก้
+  // ที่ตัวเครื่องติดกัน 5 ครั้งเร็วๆ (ใช้ตอนเครื่องไม่ได้ต่อเน็ต/WebSocket หลุดอยู่ เลยสั่งจาก Dashboard
+  // ไม่ได้) ซึ่งจะมี confirm ถามก่อนเสมอเพราะกดโดยไม่ตั้งใจได้ง่ายกว่า
+  const resetCabinetSetup = () => {
+    try { localStorage.removeItem(CABINET_ID_STORAGE_KEY); } catch { }
+    setCabinetIdInput("");
+    setCabinetId("");
+  };
+
+  // นับจำนวนครั้งที่แตะโลโก้ติดกัน (รีเซ็ตตัวนับถ้าเว้นช่วงนานเกิน 2 วิ) ครบ 5 ครั้งแล้วถาม confirm ก่อน
+  // ล้างค่า — จุดลับสำหรับเจ้าหน้าที่เท่านั้น ไม่โชว์ว่ากดได้ให้เห็นชัดๆ เพราะหน้านี้เป็นจอสาธารณะ
+  const logoTapCountRef = useRef(0);
+  const logoTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleLogoTap = () => {
+    logoTapCountRef.current += 1;
+    if (logoTapTimerRef.current) clearTimeout(logoTapTimerRef.current);
+    logoTapTimerRef.current = setTimeout(() => { logoTapCountRef.current = 0; }, 2000);
+    if (logoTapCountRef.current >= 5) {
+      logoTapCountRef.current = 0;
+      if (logoTapTimerRef.current) clearTimeout(logoTapTimerRef.current);
+      if (window.confirm("ต้องการล้างการตั้งค่ารหัสตู้ของเครื่องนี้ แล้วเปิดหน้าตั้งค่าใหม่หรือไม่?\n(สำหรับเจ้าหน้าที่เท่านั้น)")) {
+        resetCabinetSetup();
+      }
+    }
+  };
+
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [time, setTime] = useState("");
@@ -113,7 +168,7 @@ export default function TabletPage() {
   const runMotor = async (command: "open" | "dump" | "close", waitMs: number) => {
     setMotorLoading(true);
     try {
-      await fetch(`${API}/dashboard/motor/${command}`, { method: "POST" });
+      await fetch(`${API}/dashboard/cabinet/${cabinetId}/motor/${command}`, { method: "POST" });
       const actualWaitMs = fastMode ? 1000 : waitMs;
       await new Promise(res => setTimeout(res, actualWaitMs));
       if (command === "open") setMotorOpen(true);
@@ -142,15 +197,19 @@ export default function TabletPage() {
     return () => clearInterval(t);
   }, []);
 
-  // ดึงข้อมูลสถานะและปริมาณความจุของตู้รับคืนหนังสือจากเซิร์ฟเวอร์
+  // ดึงข้อมูลสถานะและปริมาณความจุของตู้รับคืนหนังสือจากเซิร์ฟเวอร์ — ใช้ /api/cabinets/:id (คาบิเน็ตที่
+  // เครื่องนี้ผูกอยู่) แทน /api/status เดิม (ตัวนั้นชี้ไปที่ตู้เริ่มต้น "cabinet-1" เสมอ ไม่ว่าแท็บเล็ต
+  // เครื่องนี้จะตั้งค่าเป็นตู้ไหนก็ตาม ใช้ไม่ได้แล้วตอนมีหลายตู้) ไม่เริ่มดึงจนกว่าจะรู้ cabinetId ก่อน
   useEffect(() => {
+    if (!cabinetId) return;
     const fetch_ = async () => {
       try {
-        const res = await fetch(`${API}/status`);
+        const res = await fetch(`${API}/cabinets/${cabinetId}`);
         const data = await res.json();
-        setIsFull(data.is_full);
+        setIsFull(!!data.is_full);
         setFastMode(data.fast_mode || false);
-        setEsp32Connected(!!data.esp32_connected);
+        setEsp32Connected(!!data.online);
+        setCabinetActive(data.active !== false);
         // อัปเดตสถานะการทำงานของมอเตอร์จากข้อมูลที่ได้รับจากเซิร์ฟเวอร์
         setMotorOpen(data.motor_status === "open" || data.motor_status === "dump");
 
@@ -168,7 +227,7 @@ export default function TabletPage() {
     fetch_();
     const t = setInterval(fetch_, 3000);
     return () => clearInterval(t);
-  }, []);
+  }, [cabinetId]);
 
   // ดึงค่าตั้งค่าตู้ (ระยะเวลารอเทหนังสือ/ระยะเวลา idle/เปิดปิดเสียง) จากเซิร์ฟเวอร์ครั้งเดียวตอนโหลดหน้า
   // ตั้งได้จากหน้า Dashboard แทนการ hardcode ไว้ในโค้ด
@@ -208,6 +267,9 @@ export default function TabletPage() {
   // ต่อใหม่อัตโนมัติถ้าหลุด (เช่น backend รีสตาร์ท/เน็ตกระตุก) ไม่งั้นถ้าหลุดแล้วค้างตลอด
   // จนกว่าจะรีเฟรชหน้าเอง จะทำให้ backend ส่ง RFID/barcode มาแต่หน้าเว็บไม่ได้รับอะไรเลย
   useEffect(() => {
+    if (!cabinetId) return; // รอรู้ก่อนว่าแท็บเล็ตเครื่องนี้ผูกกับตู้ไหน ไม่งั้นต่อ WS แบบไม่ระบุตู้จะไปรับ
+    // สัญญาณของตู้เริ่มต้น (cabinet-1) ปนกันไม่ได้
+
     let active = true;
     let ws: WebSocket | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -219,7 +281,9 @@ export default function TabletPage() {
 
     const connect = () => {
       if (!active) return;
-      ws = new WebSocket(WS_BASE_URL);
+      // ผูก connection นี้กับตู้ที่เครื่องนี้ตั้งไว้ — backend กรองส่งแค่ RFID/บาร์โค้ดของตู้นี้มาให้
+      // (ดู TabletWS ใน backend/internal/handlers/websocket.go)
+      ws = new WebSocket(`${WS_BASE_URL}?cabinet=${encodeURIComponent(cabinetId)}`);
 
       ws.onopen = () => {
         failedAttempts = 0; // เชื่อมต่อสำเร็จ รีเซ็ตตัวนับใหม่
@@ -238,6 +302,13 @@ export default function TabletPage() {
       ws.onmessage = (event) => {
         const msg = JSON.parse(event.data);
         lastActivityRef.current = Date.now(); // ถือเป็นการใช้งานหน้าจอ กันตัวจับเวลา idle รีเซ็ตกลางคัน
+
+        if (msg.type === "reset_setup") {
+          // เจ้าหน้าที่กดปุ่ม "เคลียร์การตั้งค่าแท็บเล็ต" จากหน้า Dashboard ของตู้นี้ — ยืนยันมาจากฝั่ง
+          // Dashboard แล้ว ไม่ต้องถาม confirm ซ้ำที่นี่อีก ล้างค่าแล้วกลับไปหน้าตั้งค่าทันที
+          resetCabinetSetup();
+          return;
+        }
 
         if (msg.type === "barcode") {
           // จัดการเมื่อได้รับข้อมูลประเภท Barcode เพื่อระบุตัวตนผู้ใช้งาน
@@ -294,7 +365,7 @@ export default function TabletPage() {
       if (pingInterval) clearInterval(pingInterval);
       ws?.close();
     };
-  }, []);
+  }, [cabinetId]);
 
   // ประมวลผล RFID ที่สแกนเข้ามาระหว่างรอ (ก่อนตู้เปิดเสร็จ) ทันทีที่เข้าสู่ขั้นตอนตรวจสอบหนังสือ
   useEffect(() => {
@@ -369,9 +440,9 @@ export default function TabletPage() {
       return;
     }
     try {
-      const res = await fetch(`${API}/status`);
+      const res = await fetch(`${API}/cabinets/${cabinetId}`);
       const data = await res.json();
-      if (!data.esp32_connected) {
+      if (!data.online) {
         window.location.reload();
         return;
       }
@@ -670,6 +741,121 @@ export default function TabletPage() {
 
 
 
+  // ยังไม่ได้เช็ค localStorage เสร็จ (เสี้ยววินาทีแรกตอนโหลดหน้า) — ปล่อยจอว่างไว้ก่อน กันโชว์หน้าจอ
+  // ตั้งค่าตู้วาบขึ้นมาแวบเดียวทั้งที่จริงๆเครื่องนี้เคยตั้งค่าไว้แล้ว
+  if (!cabinetIdReady) {
+    return <div className="min-h-screen bg-gradient-to-b from-blue-950 to-blue-900" />;
+  }
+
+  // ยังไม่เคยตั้งค่ารหัสตู้ให้แท็บเล็ตเครื่องนี้เลย (เครื่องใหม่/ยังไม่ได้ติดตั้ง) — ให้กรอกครั้งเดียว
+  // แล้วจำไว้ถาวรใน localStorage ไม่ต้องกรอกซ้ำทุกครั้งที่เปิดเครื่อง (ดูหน้า Dashboard สำหรับรายชื่อ
+  // รหัสตู้ที่มีอยู่ในระบบ)
+  if (!cabinetId) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-blue-950 to-blue-900 flex items-center justify-center p-4 select-none relative">
+        <AnimatedBackground />
+        <div className="relative z-10 bg-white rounded-3xl shadow-2xl w-full max-w-md p-8 text-center">
+          <div className="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-5">
+            <span className="text-4xl">🏷️</span>
+          </div>
+          <h2 className="text-2xl font-bold text-gray-800 mb-2">ตั้งค่าเครื่องนี้</h2>
+          <p className="text-gray-500 text-sm mb-6">
+            กรอกรหัสตู้ที่แท็บเล็ตเครื่องนี้ติดตั้งอยู่ (ดูได้จากหน้า Dashboard ของเจ้าหน้าที่)<br />
+            ตั้งครั้งเดียวเท่านั้น ระบบจะจำไว้ให้ถาวร
+          </p>
+          <input
+            type="text"
+            value={cabinetIdInput}
+            onChange={(e) => setCabinetIdInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") handleSetupCabinet(); }}
+            placeholder="เช่น cabinet-1"
+            className="w-full border-2 border-gray-300 rounded-xl px-4 py-3 text-lg text-center font-mono focus:outline-none focus:border-blue-500 transition mb-4"
+            autoFocus
+          />
+          <button
+            onClick={handleSetupCabinet}
+            disabled={!cabinetIdInput.trim()}
+            className="w-full bg-blue-700 hover:bg-blue-800 disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed text-white font-bold py-3 rounded-xl text-lg transition"
+          >
+            เริ่มใช้งาน
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ตู้นี้ถูกปิดให้บริการชั่วคราวจากหน้า Dashboard — บล็อกการคืนหนังสือทั้งหมดจนกว่าจะเปิดกลับมา
+  if (!cabinetActive) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-blue-950 to-blue-900 flex flex-col select-none relative">
+        <AnimatedBackground />
+        <div className="relative z-10 flex flex-col flex-1">
+
+          {/* Header */}
+          <div className="bg-blue-950 px-10 py-6 flex justify-between items-center border-b border-blue-800 shadow-lg">
+            <div className="flex items-center gap-5">
+              <div className="bg-white rounded-full w-16 h-16 flex items-center justify-center p-2">
+                <img src="/images/LOGO-RUTS-07-2-copy.png" alt="RUTS Logo" className="w-full h-full object-contain" onClick={handleLogoTap} />
+              </div>
+              <div>
+                <p className="text-blue-300 text-base tracking-widest uppercase mb-1">Book Return Station</p>
+                <h1 className="text-white text-2xl font-bold">ระบบรับคืนหนังสืออัตโนมัติ</h1>
+              </div>
+            </div>
+            <div className="text-right">
+              <p className="text-blue-400 text-base mb-1">เวลาปัจจุบัน</p>
+              <p className="text-white text-4xl font-mono font-bold">{time}</p>
+              <div className="flex items-center gap-2 mt-2 justify-end">
+                <div className="w-3 h-3 rounded-full bg-yellow-400" />
+                <p className="text-base text-yellow-300">ปิดให้บริการชั่วคราว</p>
+              </div>
+            </div>
+          </div>
+
+          {/* ส่วนแสดงหน้าจอแจ้งเตือนเมื่อตู้นี้ถูกปิดให้บริการชั่วคราวจากหน้า Dashboard */}
+          <div className="flex-1 flex items-center justify-center p-4 min-h-0">
+            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md p-6 text-center flex flex-col justify-center min-h-[400px]">
+
+              <div className="w-24 h-24 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                <span className="text-5xl">⏸️</span>
+              </div>
+
+              <h2 className="text-3xl font-bold text-yellow-600 mb-3">
+                ปิดให้บริการชั่วคราว
+              </h2>
+
+              <p className="text-gray-600 mb-2 text-xl font-semibold">
+                ตู้นี้ถูกปิดให้บริการชั่วคราวอยู่
+              </p>
+              <p className="text-gray-500 text-lg mb-5">
+                ไม่สามารถคืนหนังสือที่ตู้นี้ได้ในขณะนี้
+              </p>
+
+              <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 mb-5 text-left">
+                <p className="text-blue-700 font-bold text-lg mb-2">📋 กรุณาดำเนินการดังนี้</p>
+                <ul className="text-blue-600 text-base space-y-2 pl-2">
+                  <li>• คืนหนังสือที่ตู้อื่น หรือที่เคาน์เตอร์บริการโดยตรง</li>
+                  <li>• ติดต่อบรรณารักษ์หากมีข้อสงสัย</li>
+                </ul>
+              </div>
+
+              <p className="text-gray-400 text-sm">
+                🔄 ระบบจะอัปเดตสถานะอัตโนมัติทุก 3 วินาที
+                <br />หน้านี้จะกลับสู่ปกติเมื่อเปิดให้บริการตู้นี้อีกครั้ง
+              </p>
+            </div>
+          </div>
+
+          {/* Footer */}
+          <div className="relative z-10 text-center py-6 text-white text-xl bg-blue-950 border-t border-blue-800">
+            หากพบปัญหา กรุณาติดต่อบรรณารักษ์ที่เคาน์เตอร์
+          </div>
+
+        </div>
+      </div>
+    );
+  }
+
   // ตรวจสอบและแสดงผลหน้าจอแจ้งเตือน ในกรณีที่ตู้ไม่ได้ต่อกับ ESP32 (มอเตอร์/RFID) อยู่
   // (เช็คจาก MQTT Last Will/Testament ของ ESP32 ผ่าน backend ไม่ใช่แค่หน้าเว็บต่อ backend ได้เฉยๆ)
   // ข้ามเงื่อนไขนี้ถ้าเปิด Fast Mode ไว้ (ตั้งจากหน้า Simulator) เพื่อให้ทดสอบ flow การคืนหนังสือได้
@@ -684,7 +870,7 @@ export default function TabletPage() {
           <div className="bg-blue-950 px-10 py-6 flex justify-between items-center border-b border-blue-800 shadow-lg">
             <div className="flex items-center gap-5">
               <div className="bg-white rounded-full w-16 h-16 flex items-center justify-center p-2">
-                <img src="/images/LOGO-RUTS-07-2-copy.png" alt="RUTS Logo" className="w-full h-full object-contain" />
+                <img src="/images/LOGO-RUTS-07-2-copy.png" alt="RUTS Logo" className="w-full h-full object-contain" onClick={handleLogoTap} />
               </div>
               <div>
                 <p className="text-blue-300 text-base tracking-widest uppercase mb-1">Book Return Station</p>
@@ -757,7 +943,7 @@ export default function TabletPage() {
           <div className="bg-blue-950 px-10 py-6 flex justify-between items-center border-b border-blue-800 shadow-lg">
             <div className="flex items-center gap-5">
               <div className="bg-white rounded-full w-16 h-16 flex items-center justify-center p-2">
-                <img src="/images/LOGO-RUTS-07-2-copy.png" alt="RUTS Logo" className="w-full h-full object-contain" />
+                <img src="/images/LOGO-RUTS-07-2-copy.png" alt="RUTS Logo" className="w-full h-full object-contain" onClick={handleLogoTap} />
               </div>
               <div>
                 <p className="text-blue-300 text-base tracking-widest uppercase mb-1">Book Return Station</p>
@@ -838,7 +1024,7 @@ export default function TabletPage() {
           <div className="bg-blue-950 px-10 py-6 flex justify-between items-center border-b border-blue-800 shadow-lg">
             <div className="flex items-center gap-5">
               <div className="bg-white rounded-full w-16 h-16 flex items-center justify-center p-2">
-                <img src="/images/LOGO-RUTS-07-2-copy.png" alt="RUTS Logo" className="w-full h-full object-contain" />
+                <img src="/images/LOGO-RUTS-07-2-copy.png" alt="RUTS Logo" className="w-full h-full object-contain" onClick={handleLogoTap} />
               </div>
               <div>
                 <p className="text-blue-300 text-base tracking-widest uppercase mb-1">Book Return Station</p>
@@ -911,7 +1097,7 @@ export default function TabletPage() {
         <div className="bg-blue-950 px-8 py-4 flex justify-between items-center border-b border-blue-800 shadow-lg shrink-0">
           <div className="flex items-center gap-4">
             <div className="bg-white rounded-full w-14 h-14 flex items-center justify-center p-2">
-              <img src="/images/LOGO-RUTS-07-2-copy.png" alt="RUTS Logo" className="w-full h-full object-contain" />
+              <img src="/images/LOGO-RUTS-07-2-copy.png" alt="RUTS Logo" className="w-full h-full object-contain" onClick={handleLogoTap} />
             </div>
             <div>
               <p className="text-blue-300 text-sm tracking-widest uppercase mb-0.5">Book Return Station</p>
