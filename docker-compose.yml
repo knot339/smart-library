@@ -51,6 +51,8 @@ services:
       - SMTP_USER=${SMTP_USER}
       - SMTP_PASSWORD=${SMTP_PASSWORD}
       - SMTP_FROM=${SMTP_FROM}
+      - ADMIN_USERNAME=${ADMIN_USERNAME}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
     depends_on:
       db:
         condition: service_healthy

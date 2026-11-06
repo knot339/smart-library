@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import AviMjpegPlayer from "../../components/AviMjpegPlayer";
 import NavBar from "../../components/NavBar";
 import { API_BASE_URL as API } from "../../lib/config";
@@ -135,6 +136,42 @@ const MOTOR_CONFIG: Record<MotorStatus, {
 };
 
 export default function DashboardPage() {
+    const router = useRouter();
+
+    // ระบบ login เดียวของทั้งระบบ (user/รหัสผ่านแยกรายคนจริง) — เช็คตอนโหลดหน้าว่า login อยู่ไหม และมี
+    // สิทธิ์ can_access_dashboard ไหม ผ่าน /api/auth/me (เหมือนหน้า /admin) การป้องกันจริงๆของคำสั่งแก้ไข
+    // ข้อมูลอยู่ที่ backend (RequireDashboardAccess) ตรงนี้แค่กันไม่ให้เห็นหน้าเพจเฉยๆถ้ายังไม่มีสิทธิ์
+    const [authChecked, setAuthChecked] = useState(false);
+
+    useEffect(() => {
+        (async () => {
+            try {
+                const res = await fetch(`${API}/auth/me`, { credentials: "include" });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (!data.can_access_dashboard) {
+                        router.replace(data.can_access_admin ? "/admin" : "/login?next=/dashboard");
+                        return;
+                    }
+                } else {
+                    router.replace("/login?next=/dashboard");
+                    return;
+                }
+            } catch {
+                router.replace("/login?next=/dashboard");
+                return;
+            }
+            setAuthChecked(true);
+        })();
+    }, [router]);
+
+    const handleDashboardLogout = async () => {
+        try {
+            await fetch(`${API}/auth/logout`, { method: "POST", credentials: "include" });
+        } catch { }
+        router.replace("/login?next=/dashboard");
+    };
+
     // รายชื่อตู้ทั้งหมด (สำหรับแถบเลือกตู้ด้านบน) + ตู้ที่กำลังเลือกดูอยู่ตอนนี้
     const [cabinets, setCabinets] = useState<CabinetSummary[]>([]);
     const [selectedCabinetId, setSelectedCabinetId] = useState<string>("");
@@ -303,6 +340,7 @@ export default function DashboardPage() {
             const res = await fetch(`${API}/dashboard/notify-email`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
+                credentials: "include",
                 body: JSON.stringify({ emails: emailDraft }),
             });
             const data = await res.json();
@@ -341,6 +379,7 @@ export default function DashboardPage() {
             const res = await fetch(`${API}/dashboard/notify-line/${id}`, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
+                credentials: "include",
                 body: JSON.stringify({ channel_access_token: token, targets }),
             });
             const data = await res.json();
@@ -355,7 +394,7 @@ export default function DashboardPage() {
 
     const handleDeleteLineChannel = async (id: number) => {
         try {
-            await fetch(`${API}/dashboard/notify-line/${id}`, { method: "DELETE" });
+            await fetch(`${API}/dashboard/notify-line/${id}`, { method: "DELETE", credentials: "include" });
             notify("🗑️ ลบ LINE Official Account แล้ว");
             fetchLineChannels();
         } catch { notify("เกิดข้อผิดพลาด", "error"); }
@@ -377,6 +416,7 @@ export default function DashboardPage() {
             const res = await fetch(`${API}/dashboard/notify-line`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
+                credentials: "include",
                 body: JSON.stringify({ channel_access_token: token, targets: newLineTargets }),
             });
             const data = await res.json();
@@ -417,6 +457,7 @@ export default function DashboardPage() {
             const res = await fetch(`${API}/dashboard/system-settings`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
+                credentials: "include",
                 body: JSON.stringify({
                     dump_settle_ms: dumpSettleSec * 1000,
                     idle_timeout_ms: idleTimeoutSec * 1000,
@@ -492,6 +533,7 @@ export default function DashboardPage() {
             const res = await fetch(`${API}/dashboard/cabinet/${selectedCabinetId}/lock`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
+                credentials: "include",
                 body: JSON.stringify({ locked: !isLocked }),
             });
             const data = await res.json();
@@ -510,7 +552,7 @@ export default function DashboardPage() {
         setTogglingActive(true);
         try {
             const action = cabinetActive ? "deactivate" : "activate";
-            const res = await fetch(`${API}/cabinets/${selectedCabinetId}/${action}`, { method: "POST" });
+            const res = await fetch(`${API}/cabinets/${selectedCabinetId}/${action}`, { method: "POST", credentials: "include" });
             const data = await res.json();
             if (res.ok) {
                 notify(data.message || "สำเร็จ");
@@ -530,7 +572,7 @@ export default function DashboardPage() {
         if (!window.confirm(`ต้องการล้างการตั้งค่าแท็บเล็ตของตู้ "${cabinetName || selectedCabinetId}" หรือไม่?\nแท็บเล็ตจะกลับไปหน้าจอให้กรอกรหัสตู้ใหม่ทันที (ถ้าออนไลน์อยู่)`)) return;
         setResettingTablet(true);
         try {
-            const res = await fetch(`${API}/dashboard/cabinet/${selectedCabinetId}/reset-tablet`, { method: "POST" });
+            const res = await fetch(`${API}/dashboard/cabinet/${selectedCabinetId}/reset-tablet`, { method: "POST", credentials: "include" });
             const data = await res.json();
             notify(data.message || "สำเร็จ", res.ok ? "success" : "error");
         } catch { notify("เกิดข้อผิดพลาด", "error"); }
@@ -547,7 +589,7 @@ export default function DashboardPage() {
 
     const handleResetCabinet = async () => {
         try {
-            const res = await fetch(`${API}/dashboard/cabinet/${selectedCabinetId}/reset`, { method: "POST" });
+            const res = await fetch(`${API}/dashboard/cabinet/${selectedCabinetId}/reset`, { method: "POST", credentials: "include" });
             const data = await res.json();
             setMotorStatus(data.motor_status as MotorStatus);
             setBooksInCabinet([]);
@@ -558,6 +600,8 @@ export default function DashboardPage() {
 
     const frontStreamUrl = cameraBaseUrl("front", 81) ? `${cameraBaseUrl("front", 81)}/stream` : "";
     const insideStreamUrl = cameraBaseUrl("inside", 81) ? `${cameraBaseUrl("inside", 81)}/stream` : "";
+
+    if (!authChecked) return <div className="min-h-screen bg-gray-100" />;
 
     return (
         <div className="min-h-screen bg-gray-100">
@@ -584,6 +628,12 @@ export default function DashboardPage() {
                             <p className="text-blue-400 text-xs">เวลาปัจจุบัน</p>
                             <p className="font-mono font-bold text-lg">{time}</p>
                         </div>
+                        <button
+                            onClick={handleDashboardLogout}
+                            className="bg-blue-800 hover:bg-blue-700 px-3 py-1.5 rounded-lg text-xs font-semibold transition whitespace-nowrap"
+                        >
+                            ออกจากระบบ
+                        </button>
                     </div>
                 </div>
             </div>

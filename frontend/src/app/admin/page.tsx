@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect, useCallback, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import { API_BASE_URL as API } from "../../lib/config";
 import NavBar from "../../components/NavBar";
 
@@ -19,13 +20,55 @@ type BorrowRecord = {
   returned_by_phone: string;
   status: string;
 };
-type Tab = "books" | "borrowers" | "borrows";
+type AdminAccount = {
+  id: number; username: string; created_at: string;
+  can_access_dashboard: boolean; can_access_admin: boolean; can_access_simulator: boolean;
+};
+type Tab = "books" | "borrowers" | "borrows" | "users";
 
 const emptyBook = { isbn: "", barcode: "", bibid: "", title: "", author: "", category: "", callno: "", mattypeid: 1, stock: 1 };
 const emptyBorrower = { code: "", name: "", type: "student", phone: "" };
 const emptyBorrow = { borrower_id: "", book_id: "" };
 
 export default function AdminPage() {
+  const router = useRouter();
+
+  // ระบบ login เดียวของทั้งระบบ (user/รหัสผ่านแยกรายคนจริง) — เช็คตอนโหลดหน้าว่า login อยู่ไหม และมี
+  // สิทธิ์ can_access_admin ไหม ผ่าน /api/auth/me การป้องกันจริงๆอยู่ที่ backend (RequireAdminAuth บังคับ
+  // ทุกคำสั่งแก้ไขข้อมูล) ตรงนี้แค่กันไม่ให้เห็นหน้าเพจเฉยๆถ้ายังไม่มีสิทธิ์
+  const [authChecked, setAuthChecked] = useState(false);
+  const [username, setUsername] = useState<string | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch(`${API}/auth/me`, { credentials: "include" });
+        if (res.ok) {
+          const data = await res.json();
+          if (!data.can_access_admin) {
+            router.replace(data.can_access_dashboard ? "/dashboard" : "/login?next=/admin");
+            return;
+          }
+          setUsername(data.username);
+        } else {
+          router.replace("/login?next=/admin");
+          return;
+        }
+      } catch {
+        router.replace("/login?next=/admin");
+        return;
+      }
+      setAuthChecked(true);
+    })();
+  }, [router]);
+
+  const handleLogout = async () => {
+    try {
+      await fetch(`${API}/auth/logout`, { method: "POST", credentials: "include" });
+    } catch { }
+    router.replace("/login?next=/admin");
+  };
+
   const [tab, setTab] = useState<Tab>("books");
 
   // ---- สถานะสำหรับจัดการข้อมูลหนังสือ ----
@@ -51,6 +94,12 @@ export default function AdminPage() {
   const [borrowForm, setBorrowForm] = useState(emptyBorrow);
   const [borrowModal, setBorrowModal] = useState(false);
   const [borrowSearch, setBorrowSearch] = useState("");
+
+  // ---- สถานะสำหรับจัดการบัญชีผู้ใช้ (ระบบ login แบบที่ 2) ----
+  const [adminUsers, setAdminUsers] = useState<AdminAccount[]>([]);
+  const [newUserForm, setNewUserForm] = useState({ username: "", password: "", canAccessDashboard: true, canAccessAdmin: true, canAccessSimulator: true });
+  const [savingUser, setSavingUser] = useState(false);
+  const [savingPermissionId, setSavingPermissionId] = useState<number | null>(null);
 
   const [msg, setMsg] = useState({ text: "", type: "" });
 
@@ -94,23 +143,86 @@ export default function AdminPage() {
     setBorrows(await res.json());
   }, []);
 
+  const fetchAdminUsers = useCallback(async () => {
+    const res = await fetch(`${API}/auth/users`, { credentials: "include" });
+    if (res.ok) {
+      const data = await res.json();
+      setAdminUsers(data.users || []);
+    }
+  }, []);
+
   useEffect(() => {
     fetchBorrowers();
     fetchBorrows();
-  }, [fetchBorrowers, fetchBorrows]);
+    fetchAdminUsers();
+  }, [fetchBorrowers, fetchBorrows, fetchAdminUsers]);
+
+  // ---- ฟังก์ชันสำหรับจัดการบัญชีผู้ใช้ ----
+  const handleCreateAdminUser = async () => {
+    if (!newUserForm.username.trim() || !newUserForm.password) {
+      notify("กรุณากรอก username และ password", "error"); return;
+    }
+    if (newUserForm.password.length < 8) {
+      notify("รหัสผ่านต้องยาวอย่างน้อย 8 ตัวอักษร", "error"); return;
+    }
+    setSavingUser(true);
+    try {
+      const res = await fetch(`${API}/auth/users`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+        body: JSON.stringify({
+          username: newUserForm.username, password: newUserForm.password,
+          can_access_dashboard: newUserForm.canAccessDashboard, can_access_admin: newUserForm.canAccessAdmin,
+          can_access_simulator: newUserForm.canAccessSimulator,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        notify("เพิ่มบัญชีผู้ใช้สำเร็จ");
+        setNewUserForm({ username: "", password: "", canAccessDashboard: true, canAccessAdmin: true, canAccessSimulator: true });
+        fetchAdminUsers();
+      } else {
+        notify(data.error || "เกิดข้อผิดพลาด", "error");
+      }
+    } catch { notify("เกิดข้อผิดพลาด", "error"); }
+    setSavingUser(false);
+  };
+
+  // สลับสิทธิ์เข้าหน้า Dashboard/Admin ของบัญชีที่มีอยู่ — backend จะปฏิเสธถ้าเป็นการถอดสิทธิ์
+  // can_access_admin ออกจากบัญชีสุดท้ายที่ยังมีสิทธิ์นี้ (กันล็อกตัวเองออกจากการจัดการบัญชีถาวร)
+  const handleTogglePermission = async (user: AdminAccount, field: "can_access_dashboard" | "can_access_admin" | "can_access_simulator") => {
+    setSavingPermissionId(user.id);
+    try {
+      const res = await fetch(`${API}/auth/users/${user.id}`, {
+        method: "PUT", headers: { "Content-Type": "application/json" }, credentials: "include",
+        body: JSON.stringify({ [field]: !user[field] }),
+      });
+      const data = await res.json();
+      if (res.ok) { notify("บันทึกสิทธิ์สำเร็จ"); fetchAdminUsers(); }
+      else notify(data.error || "เกิดข้อผิดพลาด", "error");
+    } catch { notify("เกิดข้อผิดพลาด", "error"); }
+    setSavingPermissionId(null);
+  };
+
+  const handleDeleteAdminUser = async (id: number, targetUsername: string) => {
+    if (!confirm(`ยืนยันลบบัญชี "${targetUsername}"?`)) return;
+    const res = await fetch(`${API}/auth/users/${id}`, { method: "DELETE", credentials: "include" });
+    const data = await res.json();
+    if (res.ok) { notify("ลบบัญชีผู้ใช้สำเร็จ"); fetchAdminUsers(); }
+    else notify(data.error || "เกิดข้อผิดพลาด", "error");
+  };
 
   // ---- ฟังก์ชันสำหรับจัดการข้อมูลหนังสือ ----
   const handleSaveBook = async () => {
     const url = editingBook ? `${API}/books/${editingBook.id}` : `${API}/books`;
     const method = editingBook ? "PUT" : "POST";
-    const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(bookForm) });
+    const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify(bookForm) });
     if (res.ok) { notify(editingBook ? "แก้ไขหนังสือสำเร็จ" : "เพิ่มหนังสือสำเร็จ"); setBookModal(false); fetchBooks(bookPage, bookSearch); }
     else notify("เกิดข้อผิดพลาด", "error");
   };
 
   const handleDeleteBook = async (id: number) => {
     if (!confirm("ยืนยันการลบหนังสือ?")) return;
-    await fetch(`${API}/books/${id}`, { method: "DELETE" });
+    await fetch(`${API}/books/${id}`, { method: "DELETE", credentials: "include" });
     notify("ลบหนังสือสำเร็จ"); fetchBooks(bookPage, bookSearch);
   };
 
@@ -124,14 +236,14 @@ export default function AdminPage() {
   const handleSaveBorrower = async () => {
     const url = editingBorrower ? `${API}/borrowers/${editingBorrower.id}` : `${API}/borrowers`;
     const method = editingBorrower ? "PUT" : "POST";
-    const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(borrowerForm) });
+    const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify(borrowerForm) });
     if (res.ok) { notify(editingBorrower ? "แก้ไขผู้ยืมสำเร็จ" : "เพิ่มผู้ยืมสำเร็จ"); setBorrowerModal(false); fetchBorrowers(); }
     else notify("เกิดข้อผิดพลาด", "error");
   };
 
   const handleDeleteBorrower = async (id: number) => {
     if (!confirm("ยืนยันการลบผู้ยืม?")) return;
-    await fetch(`${API}/borrowers/${id}`, { method: "DELETE" });
+    await fetch(`${API}/borrowers/${id}`, { method: "DELETE", credentials: "include" });
     notify("ลบผู้ยืมสำเร็จ"); fetchBorrowers();
   };
 
@@ -143,20 +255,20 @@ export default function AdminPage() {
 
   // ---- ฟังก์ชันสำหรับจัดการข้อมูลการยืม-คืน ----
   const handleCreateBorrow = async () => {
-    const res = await fetch(`${API}/borrows`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ borrower_id: Number(borrowForm.borrower_id), book_id: Number(borrowForm.book_id) }) });
+    const res = await fetch(`${API}/borrows`, { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ borrower_id: Number(borrowForm.borrower_id), book_id: Number(borrowForm.book_id) }) });
     if (res.ok) { notify("บันทึกการยืมสำเร็จ"); setBorrowModal(false); setBorrowForm(emptyBorrow); fetchBorrows(); }
     else notify("เกิดข้อผิดพลาด", "error");
   };
 
   const handleReturn = async (id: number) => {
     if (!confirm("ยืนยันการคืนหนังสือ?")) return;
-    await fetch(`${API}/borrows/${id}/return`, { method: "PUT" });
+    await fetch(`${API}/borrows/${id}/return`, { method: "PUT", credentials: "include" });
     notify("บันทึกการคืนสำเร็จ"); fetchBorrows();
   };
 
   const handleDeleteBorrow = async (id: number) => {
     if (!confirm("ยืนยันการลบรายการ?")) return;
-    await fetch(`${API}/borrows/${id}`, { method: "DELETE" });
+    await fetch(`${API}/borrows/${id}`, { method: "DELETE", credentials: "include" });
     notify("ลบรายการสำเร็จ"); fetchBorrows();
   };
 
@@ -177,6 +289,12 @@ export default function AdminPage() {
     );
   }, [borrows, borrowSearch]);
 
+  // ยังไม่เช็ค /api/auth/me เสร็จ — ปล่อยจอว่างไว้ก่อน กันโชว์เนื้อหา/ยิง fetch ก่อนรู้ว่า login อยู่จริงไหม
+  // (ถ้าไม่ login router.replace("/admin-login") ข้างบนจะยิงไปแล้ว ไม่ต้องเรนเดอร์อะไรต่อ)
+  if (!authChecked) {
+    return <div className="min-h-screen bg-gray-100" />;
+  }
+
   return (
     <div className="min-h-screen bg-gray-100">
 
@@ -188,16 +306,27 @@ export default function AdminPage() {
           <p className="text-blue-300 text-xs">Smart Library System</p>
           <h1 className="text-xl font-bold">📋 หน้าจัดการข้อมูล (Admin)</h1>
         </div>
-        {msg.text && (
-          <div className={`px-4 py-2 rounded-lg text-sm font-medium ${msg.type === "error" ? "bg-red-500" : "bg-green-500"}`}>
-            {msg.text}
+        <div className="flex items-center gap-4">
+          {msg.text && (
+            <div className={`px-4 py-2 rounded-lg text-sm font-medium ${msg.type === "error" ? "bg-red-500" : "bg-green-500"}`}>
+              {msg.text}
+            </div>
+          )}
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-blue-300">👤 {username}</span>
+            <button
+              onClick={handleLogout}
+              className="bg-blue-800 hover:bg-blue-700 px-3 py-1.5 rounded-lg text-xs font-semibold transition"
+            >
+              ออกจากระบบ
+            </button>
           </div>
-        )}
+        </div>
       </div>
 
       {/* ส่วนการสลับแท็บแสดงข้อมูล (Tabs) */}
       <div className="bg-white border-b flex px-8">
-        {([["books", "📚 หนังสือ"], ["borrowers", "👤 ผู้ยืม"], ["borrows", "📋 รายการคืน"]] as [Tab, string][]).map(([key, label]) => (
+        {([["books", "📚 หนังสือ"], ["borrowers", "👤 ผู้ยืม"], ["borrows", "📋 รายการคืน"], ["users", "🔑 บัญชีผู้ใช้"]] as [Tab, string][]).map(([key, label]) => (
           <button key={key} onClick={() => setTab(key)}
             className={`px-6 py-4 font-semibold border-b-2 transition ${tab === key ? "border-blue-700 text-blue-700" : "border-transparent text-gray-500 hover:text-gray-700"}`}>
             {label}
@@ -373,6 +502,139 @@ export default function AdminPage() {
                           <button onClick={() => handleReturn(r.id)} className="text-green-600 hover:underline mr-3 font-medium">บันทึกคืน</button>
                         )}
                         <button onClick={() => handleDeleteBorrow(r.id)} className="text-red-500 hover:underline font-medium">ลบ</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {tab === "users" && (
+          <div>
+            <h2 className="text-lg font-bold text-gray-700 mb-1">บัญชีผู้ใช้ ({adminUsers.length} บัญชี)</h2>
+            <p className="text-gray-400 text-xs mb-4">
+              login เดียวใช้ทั้งหน้า Dashboard และ Admin — ตั้งค่าได้ว่าแต่ละบัญชีเข้าหน้าไหนได้บ้าง
+            </p>
+
+            {/* ฟอร์มเพิ่มบัญชีใหม่ */}
+            <div className="bg-white rounded-xl shadow p-6 mb-6">
+              <h3 className="text-sm font-semibold text-gray-600 mb-3">➕ เพิ่มบัญชีผู้ใช้ใหม่</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 mb-1">Username</label>
+                  <input
+                    value={newUserForm.username}
+                    onChange={e => setNewUserForm({ ...newUserForm, username: e.target.value })}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 transition"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 mb-1">Password (≥ 8 ตัวอักษร)</label>
+                  <input
+                    type="password"
+                    value={newUserForm.password}
+                    onChange={e => setNewUserForm({ ...newUserForm, password: e.target.value })}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500 transition"
+                  />
+                </div>
+              </div>
+              <div className="flex items-center gap-6 mb-4">
+                <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={newUserForm.canAccessDashboard}
+                    onChange={e => setNewUserForm({ ...newUserForm, canAccessDashboard: e.target.checked })}
+                    className="w-4 h-4"
+                  />
+                  เข้าหน้า Dashboard
+                </label>
+                <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={newUserForm.canAccessAdmin}
+                    onChange={e => setNewUserForm({ ...newUserForm, canAccessAdmin: e.target.checked })}
+                    className="w-4 h-4"
+                  />
+                  เข้าหน้า Admin
+                </label>
+                <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={newUserForm.canAccessSimulator}
+                    onChange={e => setNewUserForm({ ...newUserForm, canAccessSimulator: e.target.checked })}
+                    className="w-4 h-4"
+                  />
+                  เข้าหน้า Simulator
+                </label>
+              </div>
+              <button
+                onClick={handleCreateAdminUser}
+                disabled={savingUser}
+                className="bg-blue-700 hover:bg-blue-800 disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed text-white font-semibold px-5 py-2 rounded-lg text-sm transition"
+              >
+                {savingUser ? "⏳ กำลังเพิ่ม..." : "เพิ่มบัญชี"}
+              </button>
+            </div>
+
+            {/* รายชื่อบัญชีที่มีอยู่ */}
+            <div className="bg-white rounded-xl shadow overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-blue-50 text-blue-900">
+                  <tr>
+                    {["Username", "สร้างเมื่อ", "Dashboard", "Admin", "Simulator", "จัดการ"].map(h => (
+                      <th key={h} className="px-4 py-3 text-left font-semibold">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {adminUsers.length === 0 && (
+                    <tr><td colSpan={6} className="text-center py-8 text-gray-400">ยังไม่มีบัญชีผู้ใช้</td></tr>
+                  )}
+                  {adminUsers.map((u, i) => (
+                    <tr key={u.id} className={i % 2 === 0 ? "bg-white" : "bg-gray-50"}>
+                      <td className="px-4 py-3 font-medium text-gray-800">
+                        {u.username} {u.username === username && <span className="text-blue-500 text-xs font-normal">(คุณ)</span>}
+                      </td>
+                      <td className="px-4 py-3 text-gray-500">{fmtDate(u.created_at)}</td>
+                      <td className="px-4 py-3">
+                        <input
+                          type="checkbox"
+                          checked={u.can_access_dashboard}
+                          disabled={savingPermissionId === u.id}
+                          onChange={() => handleTogglePermission(u, "can_access_dashboard")}
+                          className="w-4 h-4 cursor-pointer disabled:cursor-not-allowed"
+                        />
+                      </td>
+                      <td className="px-4 py-3">
+                        <input
+                          type="checkbox"
+                          checked={u.can_access_admin}
+                          disabled={savingPermissionId === u.id}
+                          onChange={() => handleTogglePermission(u, "can_access_admin")}
+                          title="ต้องเหลืออย่างน้อย 1 บัญชีที่เข้าหน้า Admin ได้เสมอ"
+                          className="w-4 h-4 cursor-pointer disabled:cursor-not-allowed"
+                        />
+                      </td>
+                      <td className="px-4 py-3">
+                        <input
+                          type="checkbox"
+                          checked={u.can_access_simulator}
+                          disabled={savingPermissionId === u.id}
+                          onChange={() => handleTogglePermission(u, "can_access_simulator")}
+                          className="w-4 h-4 cursor-pointer disabled:cursor-not-allowed"
+                        />
+                      </td>
+                      <td className="px-4 py-3">
+                        <button
+                          onClick={() => handleDeleteAdminUser(u.id, u.username)}
+                          disabled={adminUsers.length <= 1}
+                          title={adminUsers.length <= 1 ? "ต้องเหลืออย่างน้อย 1 บัญชีในระบบเสมอ" : ""}
+                          className="text-red-500 hover:underline font-medium disabled:text-gray-300 disabled:no-underline disabled:cursor-not-allowed"
+                        >
+                          ลบ
+                        </button>
                       </td>
                     </tr>
                   ))}

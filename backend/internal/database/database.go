@@ -6,6 +6,7 @@ import (
 	"smart-library-api/internal/hardware"
 	"smart-library-api/internal/models"
 
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -36,12 +37,45 @@ func Connect() {
 		&models.LineChannel{},
 		&models.Cabinet{},
 		&models.CabinetCamera{},
+		&models.AdminUser{},
 	)
 
 	DB = db
 	seedDefaultCabinet()
+	seedDefaultAdminUser()
 	migrateLegacyLineSettings()
 	fmt.Println("✅ เชื่อมต่อฐานข้อมูลสำเร็จ")
+}
+
+// seedDefaultAdminUser สร้างบัญชีเจ้าหน้าที่คนแรกให้อัตโนมัติถ้ายังไม่เคยมี user ไหนในระบบเลย อ่าน
+// username/password เริ่มต้นจาก ADMIN_USERNAME/ADMIN_PASSWORD ใน .env (ถ้าไม่ได้ตั้งไว้ fallback เป็น
+// "admin"/"changeme123" พร้อม log เตือนให้เปลี่ยนรหัสผ่าน) — เข้าสู่ระบบครั้งแรกที่หน้า /admin-login
+// ได้เลยโดยไม่ต้องสร้าง user เองก่อนด้วยมือ/ทาง SQL ตรงๆ
+func seedDefaultAdminUser() {
+	var count int64
+	DB.Model(&models.AdminUser{}).Count(&count)
+	if count > 0 {
+		return
+	}
+
+	username := os.Getenv("ADMIN_USERNAME")
+	if username == "" {
+		username = "admin"
+	}
+	password := os.Getenv("ADMIN_PASSWORD")
+	if password == "" {
+		password = "changeme123"
+		fmt.Println("⚠️  ไม่ได้ตั้งค่า ADMIN_PASSWORD ใน .env — ใช้รหัสผ่านเริ่มต้น \"changeme123\" ไปก่อน ควรตั้งค่าจริงแล้วรีสตาร์ท backend")
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		fmt.Printf("❌ สร้างบัญชีเจ้าหน้าที่เริ่มต้นไม่สำเร็จ: %v\n", err)
+		return
+	}
+
+	DB.Create(&models.AdminUser{Username: username, PasswordHash: string(hash)})
+	fmt.Printf("👤 สร้างบัญชีเจ้าหน้าที่เริ่มต้น %q ให้อัตโนมัติ (เข้าหน้า /admin-login ได้เลย)\n", username)
 }
 
 // seedDefaultCabinet สร้างแถวตู้เริ่มต้น "cabinet-1" ให้อัตโนมัติถ้ายังไม่เคยมีตู้ไหนในระบบเลย — เฟสแรก

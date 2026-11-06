@@ -66,6 +66,18 @@ type CabinetCamera struct {
 	LastSeenAt time.Time `json:"last_seen_at"`
 }
 
+// บัญชีเจ้าหน้าที่สำหรับเข้าหน้า Admin (ระบบ login แบบที่ 2 — มี user/รหัสผ่านแยกรายคนจริง ต่างจาก
+// Dashboard ที่ใช้รหัสผ่านเดียวร่วมกันทั้งแผนก) PasswordHash เก็บด้วย bcrypt ไม่เก็บรหัสผ่านตรงๆเด็ดขาด
+type AdminUser struct {
+	ID                 uint      `gorm:"primaryKey" json:"id"`
+	Username           string    `gorm:"size:50;uniqueIndex" json:"username"`
+	PasswordHash       string    `gorm:"size:100" json:"-"` // ไม่ส่งออกไปใน JSON ไม่ว่ากรณีไหน
+	CanAccessDashboard bool      `gorm:"default:true" json:"can_access_dashboard"` // สิทธิ์เข้าหน้า /dashboard
+	CanAccessAdmin     bool      `gorm:"default:true" json:"can_access_admin"`     // สิทธิ์เข้าหน้า /admin
+	CanAccessSimulator bool      `gorm:"default:true" json:"can_access_simulator"` // สิทธิ์เข้าหน้า /simulator
+	CreatedAt          time.Time `json:"created_at"`
+}
+
 // โครงสร้างข้อมูลสำหรับตารางบันทึกการยืม-คืน (BorrowRecord)
 type BorrowRecord struct {
 	ID              uint       `gorm:"primaryKey" json:"id"`

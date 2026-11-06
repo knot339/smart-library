@@ -19,10 +19,16 @@ func main() {
 	hardware.OnCabinetBecameFull = handlers.SendCabinetFullNotification
 
 	app := fiber.New()
+	// AllowOrigins: "*" ใช้คู่กับ AllowCredentials: true ไม่ได้ (spec ของเบราว์เซอร์ห้ามไว้ — ต้องระบุ
+	// origin จริงเท่านั้นถ้าจะส่ง cookie ข้าม origin ได้) ระบบ login แบบที่ 2 ของหน้า /admin ต้องพึ่ง
+	// cookie ข้าม origin นี้ (frontend พอร์ต 3000, backend พอร์ต 8080 คนละ origin กันตามนิยาม CORS แม้จะ
+	// อยู่เครื่อง/โดเมนเดียวกันก็ตาม) จึงสะท้อน origin ของ request กลับไปตรงๆแทน "*" เพื่อให้ยังใช้ได้จาก
+	// IP ของเครื่อง server ที่เปลี่ยนได้เอง (hotspot) โดยไม่ต้อง hardcode origin ไว้ล่วงหน้า
 	app.Use(cors.New(cors.Config{
-		AllowOrigins: "*",
-		AllowMethods: "GET,POST,PUT,DELETE",
-		AllowHeaders: "Origin, Content-Type, Accept",
+		AllowOriginsFunc: func(origin string) bool { return true },
+		AllowMethods:     "GET,POST,PUT,DELETE",
+		AllowHeaders:     "Origin, Content-Type, Accept",
+		AllowCredentials: true,
 	}))
 
 	routes.Setup(app)

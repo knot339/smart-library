@@ -1,9 +1,39 @@
 "use client";
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { API_BASE_URL as API } from "../../lib/config";
 import NavBar from "../../components/NavBar";
 
 export default function SimulatorPage() {
+  const router = useRouter();
+
+  // ระบบ login เดียวของทั้งระบบ — เช็คตอนโหลดหน้าว่า login อยู่ไหม และมีสิทธิ์ can_access_simulator ไหม
+  // ผ่าน /api/auth/me (เหมือนหน้า /dashboard และ /admin) การป้องกันจริงๆของคำสั่งจำลองอยู่ที่ backend
+  // (RequireSimulatorAccess) ตรงนี้แค่กันไม่ให้เห็นหน้าเพจเฉยๆถ้ายังไม่มีสิทธิ์
+  const [authChecked, setAuthChecked] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch(`${API}/auth/me`, { credentials: "include" });
+        if (res.ok) {
+          const data = await res.json();
+          if (!data.can_access_simulator) {
+            router.replace(data.can_access_dashboard ? "/dashboard" : data.can_access_admin ? "/admin" : "/login?next=/simulator");
+            return;
+          }
+        } else {
+          router.replace("/login?next=/simulator");
+          return;
+        }
+      } catch {
+        router.replace("/login?next=/simulator");
+        return;
+      }
+      setAuthChecked(true);
+    })();
+  }, [router]);
+
   const [isFull, setIsFull] = useState(false);
   const [log, setLog] = useState<string[]>([]);
   const [motorLogs, setMotorLogs] = useState<string[]>([]);
@@ -18,7 +48,7 @@ export default function SimulatorPage() {
   useEffect(() => {
     const fetchStatus = async () => {
       try {
-        const res = await fetch(`${API}/status`);
+        const res = await fetch(`${API}/status`, { credentials: "include" });
         const data = await res.json();
         setIsFull(data.is_full);
         setMotorLogs(data.motor_logs || []); // ดึงข้อมูลประวัติการทำงาน (log) ของมอเตอร์จาก Backend
@@ -49,6 +79,7 @@ export default function SimulatorPage() {
       const res = await fetch(`${API}/simulator/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ type, value }),
       });
       const data = await res.json();
@@ -62,7 +93,7 @@ export default function SimulatorPage() {
   };
 
   const handleReset = async () => {
-    await fetch(`${API}/simulate/reset`, { method: "POST" });
+    await fetch(`${API}/simulate/reset`, { method: "POST", credentials: "include" });
     setIsFull(false);
     addLog("🔄 รีเซ็ตตู้แล้ว");
   };
@@ -72,6 +103,7 @@ export default function SimulatorPage() {
       const res = await fetch(`${API}/dashboard/cabinet/set-full`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ is_full: full }),
       });
       const data = await res.json();
@@ -87,6 +119,7 @@ export default function SimulatorPage() {
       const res = await fetch(`${API}/simulate/fast-mode`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ fast_mode: fast }),
       });
       const data = await res.json();
@@ -104,6 +137,7 @@ export default function SimulatorPage() {
       const res = await fetch(`${API}/simulate/force-empty`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ force_empty: force }),
       });
       const data = await res.json();
@@ -125,6 +159,7 @@ export default function SimulatorPage() {
       const res = await fetch(`${API}/simulator/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ type: "led", value: on ? "on" : "off" }),
       });
       const data = await res.json();
@@ -134,6 +169,8 @@ export default function SimulatorPage() {
       addLog("❌ ส่งคำสั่ง LED ไม่ได้");
     }
   };
+
+  if (!authChecked) return <div className="min-h-screen bg-gray-900" />;
 
   return (
     <div className="min-h-screen bg-gray-900 text-white">
@@ -312,6 +349,7 @@ export default function SimulatorPage() {
                     const res = await fetch(`${API}/simulator/send`, {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
+                      credentials: "include",
                       body: JSON.stringify({ type: "motor", value: "open" }),
                     });
                     const data = await res.json();
@@ -328,6 +366,7 @@ export default function SimulatorPage() {
                     const res = await fetch(`${API}/simulator/send`, {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
+                      credentials: "include",
                       body: JSON.stringify({ type: "motor", value: "dump" }),
                     });
                     const data = await res.json();
@@ -344,6 +383,7 @@ export default function SimulatorPage() {
                     const res = await fetch(`${API}/simulator/send`, {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
+                      credentials: "include",
                       body: JSON.stringify({ type: "motor", value: "close" }),
                     });
                     const data = await res.json();
@@ -362,6 +402,7 @@ export default function SimulatorPage() {
                     const res = await fetch(`${API}/simulator/send`, {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
+                      credentials: "include",
                       body: JSON.stringify({ type: "motor", value: "extend" }),
                     });
                     const data = await res.json();
@@ -378,6 +419,7 @@ export default function SimulatorPage() {
                     const res = await fetch(`${API}/simulator/send`, {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
+                      credentials: "include",
                       body: JSON.stringify({ type: "motor", value: "retract" }),
                     });
                     const data = await res.json();
@@ -394,6 +436,7 @@ export default function SimulatorPage() {
                     const res = await fetch(`${API}/simulator/send`, {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
+                      credentials: "include",
                       body: JSON.stringify({ type: "motor", value: "stop" }),
                     });
                     const data = await res.json();
